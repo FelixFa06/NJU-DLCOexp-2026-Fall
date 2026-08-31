@@ -32,6 +32,17 @@ The `.bat` scripts use `%~dp0` to self-locate, then `cd` into the lab dir and ru
 - `archive/` holds the old GUI `.xpr` projects and is gitignored — it is backup only, never build there.
 - `lab01/graycode.v` is a logic module only (no `top.v` / `.xdc`); it isn't a buildable lab folder.
 
+## Report
+
+Each lab has a LaTeX report at `labNN/report/main.tex`, compiled online at tex.nju.edu.cn (no local TeX). Upload the whole lab folder (code + `report/`) so `\lstinputlisting{../...}` relative paths resolve; the compiled `main.pdf` goes back into `report/`.
+
+Course-specified sections (课件; the user trims the non-essential ones):
+实验目的 · 实验原理 · 实验环境/器材 · 程序代码或流程图（优先画框图/代码流程图，不建议大段贴码）· 实验步骤/过程（截图关键步骤）· 测试方法（如何验证、如何选测试信号）· 实验结果（仿真截图 + 下载运行结果，可照片/视频）· 问题及解决办法（写明原因+办法）· 启示 · 意见和建议
+
+Cover (per experiment): 实验名称 / 姓名 / 学号 / 班级 / 邮箱 / 实验时间.
+
+Submission: zip 工程文件 + 报告电子版, upload. 仿真波形图不是必须。
+
 ## Academic integrity
 
 The reference repo `nju-dlco-exp-2026-spring` (NJU) is for learning the *workflow and structure* only — never copy its solution code.
