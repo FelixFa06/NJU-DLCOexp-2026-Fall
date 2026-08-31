@@ -1,0 +1,14 @@
+# Vivado 非工程流产物（.bit 作为交付物保留）
+.Xil/
+build/*
+!build/*.bit
+vivado.jou
+vivado.log
+vivado_*.backup.jou
+vivado_*.backup.log
+usage_statistics_webtalk.html
+usage_statistics_webtalk.xml
+hs_err_pid*.log
+
+# 旧 GUI 工程与测试目录备份
+archive/

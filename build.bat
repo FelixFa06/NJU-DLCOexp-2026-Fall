@@ -1,0 +1,10 @@
+@echo off
+rem 用法: build.bat <lab目录>    例: build.bat lab00   或   build.bat lab01\exp1
+if "%~1"=="" (
+    echo 用法: build.bat ^<lab目录^>
+    echo   例: build.bat lab00
+    exit /b 1
+)
+call D:\Xilinx\Vivado\2020.2\settings64.bat
+cd /d "%~dp0%~1"
+vivado -mode batch -source "%~dp0scripts\run.tcl"
