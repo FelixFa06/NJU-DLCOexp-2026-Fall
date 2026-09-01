@@ -12,3 +12,19 @@ hs_err_pid*.log
 
 # 旧 GUI 工程与测试目录备份
 archive/
+
+# xsim 仿真产物（sim/ 下的 testbench 是源码，需提交）
+xsim.dir/
+*.wdb
+*.vcd
+*.pb
+xvlog.log
+xelab.log
+xsim.jou
+xsim.log
+xsim_*.backup.jou
+xsim_*.backup.log
+webtalk.jou
+webtalk.log
+webtalk_*.backup.jou
+webtalk_*.backup.log
