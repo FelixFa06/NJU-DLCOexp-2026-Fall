@@ -1,7 +1,8 @@
-# Vivado 非工程流产物（.bit 作为交付物保留）
+# Vivado 非工程流产物（.bit / .vcd 作为交付物保留）
 .Xil/
 build/*
 !build/*.bit
+!build/*.vcd
 vivado.jou
 vivado.log
 vivado_*.backup.jou
@@ -16,7 +17,6 @@ archive/
 # xsim 仿真产物（sim/ 下的 testbench 是源码，需提交）
 xsim.dir/
 *.wdb
-*.vcd
 *.pb
 xvlog.log
 xelab.log

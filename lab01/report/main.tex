@@ -154,11 +154,11 @@ endcase
 \end{enumerate}
 
 % TODO：适当截图展示重要步骤（如 Vivado 综合/实现完成、下载成功），取消下面注释
-% \begin{figure}[htbp]
-%     \centering
-%     \includegraphics[width=0.7\textwidth]{exp1_build.png}
-%     \caption{Vivado 综合与实现完成}
-% \end{figure}
+\begin{figure}[htbp]
+     \centering
+     \includegraphics[width=0.7\textwidth]{exp1_build.png}
+     \caption{Vivado 综合与实现完成}
+\end{figure}
 
 \section{测试方法}
 验证方法上，本实验从两方面确认设计正确性：一是用 Vivado 做功能仿真、观察波形图验证逻辑正确，二是下载到开发板实测。测试信号的选择上，选择器遍历选择端 $Y$ 的 00/01/10/11，并给四个输入 $X_0\sim X_3$ 赋不同特征值，验证 4 选 1 逻辑；优先编码器用单个 1 依次测试各优先级别、用多个 1 测试优先级覆盖、用全 0 和未使能测试边界情况。
@@ -167,11 +167,11 @@ endcase
 
 \subsection{选择器（exp1）}
 % TODO：贴 Vivado 仿真波形截图，取消下面注释（图片命名如 exp1_wave.png 放 figures/）
-% \begin{figure}[htbp]
-%     \centering
-%     \includegraphics[width=0.7\textwidth]{exp1_wave.png}
-%     \caption{选择器仿真波形}
-% \end{figure}
+\begin{figure}[htbp]
+    \centering
+     \includegraphics[width=0.7\textwidth]{exp1_wave.png}
+    \caption{选择器仿真波形}
+\end{figure}
 % TODO：贴上板运行结果，取消下面注释（图片命名如 exp1_board.jpg 放 figures/）
 % \begin{figure}[htbp]
 %     \centering
@@ -182,11 +182,11 @@ endcase
 
 \subsection{优先编码器（exp2）}
 % TODO：贴 Vivado 仿真波形截图，取消下面注释（图片命名如 exp2_wave.png 放 figures/）
-% \begin{figure}[htbp]
-%     \centering
-%     \includegraphics[width=0.7\textwidth]{exp2_wave.png}
-%     \caption{优先编码器仿真波形}
-% \end{figure}
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{exp2_wave.png}
+    \caption{优先编码器仿真波形}
+\end{figure}
 % TODO：贴上板运行结果，取消下面注释（图片命名如 exp2_board.jpg 放 figures/）
 % \begin{figure}[htbp]
 %     \centering
