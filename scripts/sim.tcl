@@ -5,6 +5,6 @@ file mkdir $BUILD_DIR
 
 set vfiles [concat [glob ./*.v] [glob ./sim/*.v]]
 
-exec cmd /c "xvlog $vfiles"
-exec cmd /c "xelab -debug typical -timescale 1ns/1ps -s sim_snapshot tb_top"
-exec cmd /c "xsim sim_snapshot -R"
+exec xvlog {*}$vfiles
+exec xelab -debug typical -timescale 1ns/1ps -s sim_snapshot tb_top
+exec xsim sim_snapshot -R
