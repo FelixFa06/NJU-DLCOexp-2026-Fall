@@ -46,4 +46,4 @@ clean.bat <lab>    :: 清理 build/、.Xil/ 及 Vivado/xsim 日志
 
 - **每个顶层端口都要有对应 `.xdc` 约束**；未使用的总线位也要约束并置 0（如 `assign LED[3] = 1'b0;`）。
 - `sim/tb.v` 放在 `sim/` 子目录，避免被 `run.tcl` 的 `glob ./*.v` 误收进综合；testbench 模块名统一 `tb_top`。
-- `build/top.bit` 与 `build/top.vcd` 作为交付物纳入版本控制（`.gitignore` 已放行）。
+- `build/` 整体被 `.gitignore` 忽略：`.bit` / `.vcd` 是可随时由 `build.bat` / `sim.bat` 重新生成的产物，不纳入版本控制。

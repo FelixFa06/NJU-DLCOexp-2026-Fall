@@ -1,8 +1,6 @@
-# Vivado 非工程流产物（.bit / .vcd 作为交付物保留）
+# Vivado 非工程流产物（.bit / .vcd 可随时由 build/sim 重新生成，不纳入版本控制）
 .Xil/
-build/*
-!build/*.bit
-!build/*.vcd
+build/
 vivado.jou
 vivado.log
 vivado_*.backup.jou

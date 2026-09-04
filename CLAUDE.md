@@ -32,7 +32,7 @@ The `.bat` scripts use `%~dp0` to self-locate, then `cd` into the lab dir and ru
 
 - **Every top-level port must have a matching `.xdc` constraint.** An unconstrained output triggers place/route warnings or errors (hit with `LED[3]` in exp2). Unused bus bits must still be constrained and tied off (`assign LED[3] = 1'b0;`).
 - **`SW[8]` and `SW[9]` use `IOSTANDARD LVCMOS18`** (bank 34), not `LVCMOS33` like the other switches — keep the master's value when uncommenting.
-- `.bit` files are committed deliverables: `.gitignore` keeps `build/*.bit` but ignores the rest of `build/`.
+- `.bit` / `.vcd` are regenerable build artifacts, **not** tracked by git (`build/` is fully ignored) — regenerate anytime via `build.bat` / `sim.bat`.
 - `archive/` holds the old GUI `.xpr` projects and is gitignored — it is backup only, never build there.
 - `lab01/graycode.v` is a logic module only (no `top.v` / `.xdc`); it isn't a buildable lab folder.
 
