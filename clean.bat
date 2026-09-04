@@ -10,12 +10,15 @@ if exist build rmdir /s /q build
 if exist .Xil rmdir /s /q .Xil
 if exist vivado.jou del /q vivado.jou
 if exist vivado.log del /q vivado.log
+del /q vivado_*.backup.jou 2>nul
+del /q vivado_*.backup.log 2>nul
 if exist usage_statistics_webtalk.html del /q usage_statistics_webtalk.html
 if exist usage_statistics_webtalk.xml del /q usage_statistics_webtalk.xml
+del /q hs_err_pid*.log 2>nul
 if exist xsim.dir rmdir /s /q xsim.dir
 if exist xvlog.log del /q xvlog.log
 if exist xelab.log del /q xelab.log
-if exist xelab.pb del /q xelab.pb
+del /q *.pb 2>nul
 if exist xsim.jou del /q xsim.jou
 if exist xsim.log del /q xsim.log
 if exist webtalk.jou del /q webtalk.jou
