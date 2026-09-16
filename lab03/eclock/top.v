@@ -6,7 +6,8 @@ module top(
     input  wire BTNL,
     input  wire BTNU,
     input  wire BTND,
-    input  wire [1:0] SW,
+    input  wire [10:0] SW,
+    output wire [0:0] LED,
     output wire CA, CB, CC, CD, CE, CF, CG, DP,
     output wire [7:0] AN
 );
@@ -15,7 +16,7 @@ module top(
     wire mode = SW[0];
 
     // ================= 时基：统一在此产生，向下分发 =================
-    wire tick_1ms, tick_1s, tick_10ms;
+    wire tick_1ms, tick_1s, tick_10ms, tick_100ms;
     tickgen #(.tick_freq(1000)) u_tick_1ms (   // 扫描节拍
         .clk(CLK100MHZ), .rst(rst), .en(1'b1), .tick(tick_1ms)
     );
@@ -25,7 +26,11 @@ module top(
     tickgen #(.tick_freq(100)) u_tick_10ms (   // 秒表百分秒节拍
         .clk(CLK100MHZ), .rst(rst), .en(1'b1),   .tick(tick_10ms)
     );
+    tickgen #(.tick_freq(10)) u_tick_100ms (   // 闹钟闪烁节拍
+        .clk(CLK100MHZ), .rst(rst), .en(1'b1),   .tick(tick_100ms)
+    );
 
+    // 按键消抖
     wire BTNC_edge, BTNR_edge, BTNL_edge, BTNU_edge, BTND_edge;
     debounce btnc(
         .clk(CLK100MHZ),
@@ -58,6 +63,7 @@ module top(
         .btn_edge(BTND_edge)
     );
 
+    // 秒表控制信号
     sw_signal sw1(
         .clk(CLK100MHZ),
         .rst(rst),
@@ -78,22 +84,27 @@ module top(
         .en_sw    (en_sw),
         .tick_1s  (tick_1s),
         .tick_10ms(tick_10ms),
+        .tick_100ms(tick_100ms),
         .set_edge (BTNL_edge),
         .up_edge  (BTNU_edge),
         .down_edge(BTND_edge), 
         .mode     (mode),
+        .en_alarm (SW[2]),
+        .alarm_bcd0(SW[6:3]),
+        .alarm_bcd1(SW[10:7]),
         .bcd0     (bcd0),
         .bcd1     (bcd1),
         .bcd2     (bcd2),
         .bcd3     (bcd3),
         .bcd4     (bcd4),
-        .bcd5     (bcd5)
+        .bcd5     (bcd5),
+        .alarm    (LED[0])
     );
 
     bcd_display6 u_dis6(
         .clk     (CLK100MHZ),
         .rst     (rst),
-        .en (tick_1ms),
+        .en      (tick_1ms),
         .bcd0    (bcd0),
         .bcd1    (bcd1),
         .bcd2    (bcd2),

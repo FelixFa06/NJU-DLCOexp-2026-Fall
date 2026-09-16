@@ -6,21 +6,27 @@ module eclock(
     input  wire en_sw,
     input  wire tick_1s,
     input  wire tick_10ms,
+    input  wire tick_100ms,
     input  wire set_edge,
     input  wire up_edge,
     input  wire down_edge,
     input  wire mode,
+    input  wire en_alarm,
+    input  wire [3:0] alarm_bcd0,
+    input  wire [3:0] alarm_bcd1,
     output wire [3:0] bcd0,
     output wire [3:0] bcd1,
     output wire [3:0] bcd2,
     output wire [3:0] bcd3,
     output wire [3:0] bcd4,
-    output wire [3:0] bcd5
+    output wire [3:0] bcd5,
+    output reg alarm
 );
 
+    // 调时模块
     wire up_s, down_s, up_m, down_m, up_h, down_h;
     set_signal set1(
-        clk, set_edge, up_edge, down_edge, 
+        clk, set_edge, up_edge, down_edge, mode, 
         up_s, down_s, up_m, down_m, up_h, down_h
     );
 
@@ -43,6 +49,20 @@ module eclock(
         .clk(clk), .rst(rst), .en_up(carry_m2h || up_h), .en_down(borrow_m2h || down_h), 
         .bcd0(clk_h0), .bcd1(clk_h1), .carry(), .borrow()
     );
+
+    // 闹钟模块
+    reg blink;
+    always @(posedge clk) begin
+        if (tick_100ms)
+            blink <= ~blink;
+    end
+    always @(posedge clk) begin
+        if (mode==0 && en_alarm && alarm_bcd0==clk_h0 && 
+        alarm_bcd1==clk_h1 && clk_m0 == 0 && clk_m1 == 0)
+            alarm <= blink;
+        else
+            alarm <= 0;
+    end
 
     // ================= 秒表计数链：百分秒 → 秒 → 分 =================
     wire [3:0] sw_f0, sw_f1, sw_s0, sw_s1, sw_m0, sw_m1;
@@ -98,6 +118,7 @@ module set_signal(
     input set_edge,
     input up_edge,
     input down_edge,
+    input mode,
     output up_s,
     output down_s,
     output up_m,
@@ -110,10 +131,10 @@ module set_signal(
         if (set_edge)
             set <= set==2'd2 ? 2'd0 : set+2'd1;
     
-    assign up_s = set==2'd0 && up_edge;
-    assign down_s = set==2'd0 && down_edge;
-    assign up_m = set==2'd1 && up_edge;
-    assign down_m = set==2'd1 && down_edge;
-    assign up_h = set==2'd2 && up_edge;
-    assign down_h = set==2'd2 && down_edge;
+    assign up_s = mode==1'b0 && set==2'd0 && up_edge;
+    assign down_s = mode==1'b0 && set==2'd0 && down_edge;
+    assign up_m = mode==1'b0 && set==2'd1 && up_edge;
+    assign down_m = mode==1'b0 && set==2'd1 && down_edge;
+    assign up_h = mode==1'b0 && set==2'd2 && up_edge;
+    assign down_h = mode==1'b0 && set==2'd2 && down_edge;
 endmodule
