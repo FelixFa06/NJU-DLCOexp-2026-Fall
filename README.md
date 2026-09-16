@@ -5,6 +5,7 @@ Nexys A7-100T 开发板上的数字逻辑与计算机组成实验课程作业仓
 ## 环境
 
 - 开发板：Nexys A7-100T（FPGA `xc7a100tcsg324-1`）
+- 操作系统：Windows 11
 - Vivado 2020.2（`D:\Xilinx\Vivado\2020.2`，不在 PATH，脚本内部先 `source settings64.bat`）
 - 报告：LaTeX（`ctexart`），在线编译（tex.nju.edu.cn）
 
