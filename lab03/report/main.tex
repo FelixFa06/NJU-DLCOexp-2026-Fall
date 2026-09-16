@@ -1,0 +1,504 @@
+% ============================================================
+%  DLCO 实验报告模板（lab03 实例）
+%  【编译】整个 lab 目录上传 tex.nju.edu.cn，编译 main.tex，下载 main.pdf 放回本目录
+%  【提交】工程文件 + 报告电子版打包 zip 上传
+%
+%  lab03 图占位约定：截图按下列文件名存到 report/figures/ 即自动插入，不需要改 tex
+%    —— 实验过程 ——
+%      lab03_timer_build.png    计时器工程 Vivado 综合/实现/下载成功
+%      lab03_eclock_build.png   电子钟工程 Vivado 综合/实现/下载成功
+%    —— 实验结果（上板实测） ——
+%      lab03_timer_board.jpg    计时器：计数 / 暂停 / 清零 / 进位闪烁
+%      lab03_eclock_board.jpg   电子钟：走时（时:分:秒）
+%      lab03_eclock_set.jpg     电子钟：调时（选位 + 加减）
+%      lab03_eclock_alarm.jpg   电子钟：闹钟 LED 闪烁
+%      lab03_eclock_sw.jpg      秒表：启停 / 清零 / 百分秒
+%
+%  【照片方向】手机拍照会把旋转角度记在 EXIF 标签里，Windows 看图会读、LaTeX 不读，
+%   于是照片在 PDF 里是倒的/转的。在 report/ 下运行 python fix_exif.py 可把方向
+%   焊进像素（只重编码需要旋转的图，原本正常的图不动）。个别图也可临时用
+%   \autoimg[angle=180]{...}{...}{...} 兜一下。
+% ============================================================
+\documentclass[12pt, a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{left=2.5cm, right=2.5cm, top=3cm, bottom=3cm}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{tikz}
+
+\graphicspath{{figures/}}
+
+% ---------------- 代码高亮设置 ----------------
+\lstset{
+    language=Verilog,
+    basicstyle=\ttfamily\small,
+    frame=single,
+    framesep=5pt,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4
+}
+
+% ---------------- 截图按文件存在与否自动插入 ----------------
+% 图在 figures/ 里就自动插入；不在则跳过（不报错），PDF 可直接编译
+% 可选参数传 graphicx 选项（照片方向不对时用），例如：
+%   \autoimg[angle=180]{lab03_eclock_set.jpg}{图题}{0.65\textwidth}
+\newcommand{\autoimg}[4][]{\IfFileExists{figures/#2}{%
+    \begin{figure}[htbp]\centering
+    \if\relax\detokenize{#1}\relax
+        \includegraphics[width=#4]{#2}%
+    \else
+        \includegraphics[width=#4,#1]{#2}%
+    \fi
+    \caption{#3}\end{figure}}{}}
+
+% ---------------- 封面信息 ----------------
+\newcommand{\coursename}{数字逻辑与计算机组成实验}
+\newcommand{\expname}{lab03：计时器与电子时钟}
+\newcommand{\expdate}{2026-09-16}
+\newcommand{\stuname}{法童}
+\newcommand{\stuid}{251250046}
+\newcommand{\stumail}{251250046@smail.nju.edu.cn}
+
+\begin{document}
+
+% 封面
+\begin{titlepage}
+    \centering
+    \vspace*{4cm}
+    {\Huge\bfseries 实验报告\par}
+    \vspace{1.5cm}
+    {\Large \coursename\par}
+    \vspace{0.8cm}
+    {\Large \expname\par}
+    \vspace{3cm}
+    {\large
+    \begin{tabular}{rl}
+        姓名： & \stuname \\
+        学号： & \stuid \\
+        邮箱： & \stumail \\
+        实验时间： & \expdate \\
+    \end{tabular}\par}
+\end{titlepage}
+
+\section{实验目的}
+\begin{enumerate}
+    \item 掌握参数化分频器的设计：把板载 100\,MHz 时钟分频为 1\,Hz 的计时时钟与 1\,kHz 的扫描时钟，理解翻转计数法分频的频率计算。
+    \item 用 1\,Hz 时钟驱动一个模 60 计数器，实现开始、暂停、清零三种控制，并在两位七段数码管上以十进制显示 00--59；计满一周时用 LED 闪烁一个时钟周期提示。
+    \item 在拓展部分实现多功能电子时钟：时/分/秒走时、调时（选位 + 加减）、闹钟（定时 LED 闪烁）、百分秒精度秒表（可停止重启），掌握多模块层次化设计、按键消抖与多位动态扫描显示。
+    \item 对比"分频时钟"与"使能脉冲（tick）"两种时基产生方式，理解单时钟域设计在工程上的优势；继续熟练 \texttt{top} + \texttt{.xdc} 的上板流程。
+\end{enumerate}
+
+\section{实验原理}
+
+\subsection{计时器（3.5.1）}
+题目要求先用 100\,MHz 时钟产生 1\,Hz 的时钟信号，再以该 1\,Hz 信号作为计时时钟计数。分频采用\textbf{翻转计数法}：用一个计数器对输入时钟计数，每计满 $N$ 个周期就把输出电平翻转一次，于是输出为方波，周期为 $2N$ 个输入周期，即
+\begin{equation*}
+    N = \frac{f_{\text{clk}}}{2 f_{\text{out}}} - 1,\qquad
+    f_{\text{out}} = \frac{100\,\text{MHz}}{2\,(N+1)}.
+\end{equation*}
+取 $f_{\text{out}}=1$\,Hz 得 $N=49\,999\,999$，输出周期 1\,s、占空比 50\%。题目中"闪烁一个时钟周期"即指该 1\,Hz 时钟的一个周期，也就是 1\,s。
+
+模 60 计数器在 1\,Hz 时钟上升沿累加，取值 0--59：计到 59 的下一拍回到 0，同时把进位输出 \texttt{rco} 拉高一个时钟周期，用于点亮 LED 提示计时结束。计数器输出 $Q$ 是 6 位二进制，需要拆成十位与个位两个 BCD 码（$Q/10$ 与 $Q\%10$）分别译码，才能在数码管上以十进制显示。
+
+Nexys A7 的八位数码管为\textbf{共阳极、段选与位选均低有效}：段码位为 0 表示该段点亮，位选 \texttt{AN} 为 0 表示该位选通。两位数字无法同时显示，因此用 1\,kHz 时钟在两位之间来回切换位选，配合视觉暂留即可看到稳定的两位数。
+
+\subsection{电子时钟（3.5.2）}
+拓展部分需要在一套硬件上同时实现走时、调时、闹钟与秒表，共同点是都需要"以秒（或更细）为单位推进"的节拍，区别在于\textbf{各自的使能、复位与进位关系不同}。因此设计分三层：
+
+\textbf{时基层}：仍用 100\,MHz 主时钟，但不再分频出新时钟，而是产生\textbf{单周期的使能脉冲}（tick）——计数器计满一个额定周期后只在某一个 100\,MHz 周期内输出高电平。所有计数逻辑都在 100\,MHz 单时钟域内工作，只靠 tick 决定"何时该走一步"，避免多时钟域与门控时钟带来的时序问题。
+
+\textbf{计数层}：用参数化的两位 BCD 加减计数器作为基本单元，支持加计数与减计数，并输出进位 \texttt{carry} 与借位 \texttt{borrow}，把若干单元级联成两条计数链：
+\begin{itemize}
+    \item 走时链：秒（00--59）$\to$ 分（00--59）$\to$ 时（00--23），级联信号取上一位的 \texttt{carry}/\texttt{borrow}；
+    \item 秒表链：百分秒（00--99）$\to$ 秒（00--59）$\to$ 分（00--59），百分秒由 10\,ms 使能驱动，100 个百分秒进位到 1 秒。
+\end{itemize}
+\textbf{功能层}：调时把按键产生的加/减脉冲注入对应计数单元的 \texttt{en\_up}/\texttt{en\_down}；闹钟比较当前时与开关设定的时，相等且分为 00 时让 LED 闪烁；显示源选择用模式开关在两条链之间切换。
+
+\section{实验环境与器材}
+\begin{itemize}
+    \item 开发板：Nexys A7-100T（FPGA 型号 xc7a100tcsg324-1）
+    \item 开发工具：Vivado 2020.2（非工程模式，\texttt{build.bat} / \texttt{prog.bat} 脚本驱动）
+    \item 硬件描述语言：Verilog HDL
+\end{itemize}
+
+\section{设计思路}
+\label{sec:design}
+
+\subsection{计时器：分频器、模 60 计数器与两位扫描显示}
+计时器工程共四个模块：\texttt{clkgen}（参数化分频器）、\texttt{timer}（模 60 计数器）、\texttt{display}（两位扫描与位选译码）、\texttt{bcd7seg}（BCD 转七段段码），由 \texttt{top} 包装到板级端口。系统框图与端口分配如下：
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[every node/.style={font=\small}]
+        \node[anchor=east] (clk) at (-0.4,1.5) {\texttt{CLK100MHZ}};
+        \node[draw, minimum width=1.9cm, minimum height=1.0cm, align=center] (cg1) at (2.0,1.5) {\texttt{clkgen}\\\scriptsize \texttt{clk\_freq=1}};
+        \node[draw, minimum width=2.0cm, minimum height=1.4cm, align=center] (tmr) at (5.5,1.5) {\texttt{timer}\\模 60};
+        \node[draw, minimum width=2.1cm, minimum height=1.4cm, align=center] (dsp) at (9.1,1.5) {\texttt{display}\\两位扫描};
+        \node[anchor=west] (seg) at (10.4,1.5) {两位数码管};
+        \node[draw, minimum width=1.9cm, minimum height=1.0cm, align=center] (cg2) at (2.0,-1.4) {\texttt{clkgen}\\\scriptsize \texttt{clk\_freq=1000}};
+        \node[anchor=south] (sw) at (5.5,0.0) {\texttt{SW[0]} 使能\quad \texttt{SW[1]} 清零};
+        \node[anchor=south] (led) at (5.5,3.1) {\texttt{LED[0]} 进位指示};
+        \draw[->] (clk) -- (cg1);
+        \draw[->] (cg1) -- node[above, font=\scriptsize]{1\,Hz} (tmr);
+        \draw[->] (sw) -- (tmr);
+        \draw[->] (tmr) -- node[above, font=\scriptsize]{$Q$[5:0]} (dsp);
+        \draw[->] (cg2.east) -| node[pos=0.25, below, font=\scriptsize]{1\,kHz 扫描节拍} (dsp.south);
+        \draw[->] (dsp) -- (seg);
+        \draw[->] (tmr.north) -- (led);
+    \end{tikzpicture}
+    \caption{计时器系统框图}
+    \label{fig:timer}
+\end{figure}
+
+\begin{table}[htbp]
+    \centering
+    \caption{计时器板级端口分配}
+    \label{tab:timer-io}
+    \begin{tabular}{lll}
+        \hline
+        板级资源 & 顶层信号 & 功能 \\
+        \hline
+        \texttt{CLK100MHZ} & \texttt{CLK100MHZ} & 100\,MHz 系统时钟 \\
+        \texttt{SW[0]} & \texttt{en}  & 开始（1）/ 暂停（0）\\
+        \texttt{SW[1]} & \texttt{rst} & 计数器清零 \\
+        \texttt{LED[0]} & \texttt{rco} & 计满 60 时亮一个 1\,Hz 时钟周期 \\
+        \texttt{AN[7:0]}、\texttt{CA..CG}、\texttt{DP} & 数码管 & 两位十进制显示；未用位熄灭、小数点熄灭 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+分频器是参数化的，同一段代码通过 \texttt{clk\_freq} 参数复用出 1\,Hz 与 1\,kHz 两路时钟；另设 \texttt{clken} 允许暂停分频：
+
+\begin{lstlisting}
+module clkgen(input clkin, input rst, input clken, output reg clkout);
+    parameter clk_freq=1000;
+    parameter countlimit=100000000/2/clk_freq-1;
+    reg [31:0] clkcount;
+    always @ (posedge clkin)
+        if(rst) begin clkcount<=0; clkout<=1'b0; end
+        else if(clken) begin
+            if(clkcount>=countlimit) begin clkcount<=32'd0; clkout<=~clkout; end
+            else clkcount<=clkcount+1;
+        end
+endmodule
+\end{lstlisting}
+
+模 60 计数器只有十几行，要点是\textbf{清零优先级最高}、计满回卷并置起进位：
+
+\begin{lstlisting}
+always @(posedge clk)
+    if (rst) begin                       // 清零优先于使能：暂停时也能清零
+        Q <= 0; rco <= 1'b0;
+    end
+    else if (en)
+        if (Q==59) begin                 // 00..59 共用 60 个状态
+            Q <= 0; rco <= 1'b1;         // 回卷并给出一个周期的进位脉冲
+        end
+        else begin Q <= Q+1; rco <= 1'b0; end
+\end{lstlisting}
+
+\texttt{display} 用除法与取模把 $Q$ 拆成十位、个位后分别译码（组合逻辑），再用扫描时钟在两位之间切换：
+
+\begin{lstlisting}
+assign out_dis0 = Q%10;   assign out_dis1 = Q/10;   // 个位 / 十位
+bcd7seg(out_dis0, h0);    bcd7seg(out_dis1, h1);    // 两路段码
+always @(select)
+    case (select)
+        1'b0: begin seg7[7:0] = 8'b11111110; h=h0; end   // 只选通右位（个位）
+        1'b1: begin seg7[7:0] = 8'b11111101; h=h1; end   // 只选通左位（十位）
+    endcase
+\end{lstlisting}
+
+\noindent 其中 \texttt{select} 直接接 1\,kHz 扫描时钟，位选每 0.5\,ms 切换一次、一轮 2 位共 1\,ms，刷新率 1\,kHz，远高于人眼分辨能力，因此看到的是两位同时点亮。段码表按共阳极低有效编写，\texttt{default} 输出全 1（熄灭），因此送入 10--15 时该位不显示。
+
+\subsection{电子时钟：时基、计数链、控制与显示}
+电子钟工程的层次如图~\ref{fig:eclock}：\texttt{tickgen} 产生全部时基，\texttt{debounce} 处理按键，\texttt{set\_signal}/\texttt{sw\_signal} 把按键脉冲翻译成控制信号，\texttt{eclock} 是功能核心，\texttt{bcd\_display6} 负责 6 位动态扫描。
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[every node/.style={font=\small}]
+        \node[anchor=east] (clk) at (-0.4,2.6) {\texttt{CLK100MHZ}};
+        \node[draw, minimum width=2.3cm, minimum height=1.2cm, align=center] (tg) at (1.9,2.6) {\texttt{tickgen} $\times4$\\\scriptsize 1\,ms/10\,ms/100\,ms/1\,s};
+        \node[draw, minimum width=2.6cm, minimum height=2.8cm, align=center] (ec) at (6.2,1.5) {\texttt{eclock}\\[2pt]\scriptsize 走时链 时:分:秒\\\scriptsize 秒表链 分:秒:百分秒\\\scriptsize 闹钟比较\\\scriptsize 显示源选择};
+        \node[draw, minimum width=2.2cm, minimum height=1.2cm, align=center] (dd) at (10.0,1.5) {\texttt{bcd\_display6}\\6 位扫描};
+        \node[anchor=east] (btn) at (-0.4,-0.9) {按键 \texttt{BTNC/R/L/U/D}\\开关 \texttt{SW[10:0]}};
+        \node[draw, minimum width=2.3cm, minimum height=1.5cm, align=center] (db) at (1.9,-0.9) {\texttt{debounce} $\times5$\\\texttt{set\_signal}\\\texttt{sw\_signal}};
+        \node[anchor=west] (seg) at (11.3,1.5) {6 位数码管};
+        \node[anchor=south] (led) at (6.2,3.2) {\texttt{LED[0]} 闹钟闪烁};
+        \draw[->] (clk) -- (tg);
+        \draw[->] (tg) -- (ec);
+        \draw[->] (btn) -- (db);
+        \draw[->] (db.east) -| (ec.south);
+        \draw[->] (ec) -- node[above, font=\scriptsize]{六位 BCD} (dd);
+        \draw[->] (dd) -- (seg);
+        \draw[->] (ec.north) -- (led);
+    \end{tikzpicture}
+    \caption{电子钟系统框图}
+    \label{fig:eclock}
+\end{figure}
+
+\subsubsection*{（1）时基：单周期使能脉冲}
+\texttt{tickgen} 与 \texttt{clkgen} 的区别在于：计满额定周期时只在\textbf{一个}主时钟周期内把 \texttt{tick} 拉高，而不是翻转输出电平。
+
+\begin{lstlisting}
+localparam integer countlimit = clk_freq / tick_freq - 1;
+always @(posedge clk)
+    if (rst) begin clkcount <= 32'd0; tick <= 1'b0; end
+    else if (en)
+        if (clkcount >= countlimit) begin
+            clkcount <= 32'd0; tick <= 1'b1;      // 只高一拍
+        end
+        else begin clkcount <= clkcount + 32'd1; tick <= 1'b0; end
+\end{lstlisting}
+
+四个实例共用一段代码，靠参数得到全部节拍，见表~\ref{tab:tick}。
+
+\begin{table}[htbp]
+    \centering
+    \caption{\texttt{tickgen} 时基分配（主时钟 100\,MHz）}
+    \label{tab:tick}
+    \begin{tabular}{llrl}
+        \hline
+        实例 & \texttt{tick\_freq} & 计数上限 & 用途 \\
+        \hline
+        \texttt{u\_tick\_1ms}   & 1000 & 99\,999     & 数码管动态扫描节拍 \\
+        \texttt{u\_tick\_10ms}  & 100  & 999\,999    & 秒表百分秒计数、按键消抖采样 \\
+        \texttt{u\_tick\_100ms} & 10   & 9\,999\,999 & 闹钟 LED 闪烁节拍 \\
+        \texttt{u\_tick\_1s}    & 1    & 99\,999\,999 & 时钟走时节拍 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsubsection*{（2）计数单元：参数化两位 BCD 加减计数器}
+\texttt{bcd\_count2} 是整套设计的复用核心：两位 BCD（\texttt{bcd1} 为高位）加上限 \texttt{max1}/\texttt{max0} 参数，同时支持加计数与减计数，并输出进位、借位。加计数到上限回卷给出 \texttt{carry}，减计数到 00 回卷到上限给出 \texttt{borrow}：
+
+\begin{lstlisting}
+parameter [3:0] max0 = 9;                       // 例化时改为 (max1,max0):
+parameter [3:0] max1 = 9;                       //   (5,9)=00..59  (2,3)=00..23  (9,9)=00..99
+always @(posedge clk)
+    if (rst) begin bcd0<=0; bcd1<=0; carry<=0; borrow<=0; end
+    else if (en_up) begin
+        borrow <= 1'b0;
+        if (bcd0==max0 && bcd1==max1) begin         // 计满回卷
+            bcd0<=4'd0; bcd1<=4'd0; carry<=1'b1;
+        end
+        else if (bcd0==4'd9) begin                  // 个位向十位进位
+            bcd0<=4'd0; bcd1<=bcd1+4'd1; carry<=1'b0;
+        end
+        else begin bcd0<=bcd0+4'd1; carry<=1'b0; end
+    end
+    else if (en_down) begin                         // 减计数：00 回卷到上限并借位
+        ...
+    end
+\end{lstlisting}
+
+\noindent 只要换一个 \texttt{max1}/\texttt{max0} 组合，同一模块就变成 00--59 的秒/分、00--23 的时、00--99 的百分秒，共例化 6 次。走时链的级联如下（秒与分的上限为 59，时上限为 23）：
+
+\begin{lstlisting}
+bcd_count2 #(.max1(5), .max0(9)) u_clk_sec (      // 00..59
+    .clk(clk), .rst(rst), .en_up(tick_1s && en || up_s), .en_down(down_s),
+    .bcd0(clk_s0), .bcd1(clk_s1), .carry(carry_s2m), .borrow(borrow_s2m));
+bcd_count2 #(.max1(5), .max0(9)) u_clk_min (      // 分的加来自秒的进位，也可由调时按键驱动
+    ... .en_up(carry_s2m || up_m), .en_down(borrow_s2m || down_m),
+    .carry(carry_m2h), .borrow(borrow_m2h));
+bcd_count2 #(.max1(2), .max0(3)) u_clk_hour (     // 00..23
+    ... .en_up(carry_m2h || up_h), .en_down(borrow_m2h || down_h));
+\end{lstlisting}
+
+秒表链与走时链结构相同，但用独立的复位/使能（\texttt{rst\_sw}、\texttt{en\_sw}），百分秒用 10\,ms 节拍：
+
+\begin{lstlisting}
+bcd_count2 #(.max1(9), .max0(9)) u_sw_frac (      // 00..99 百分秒
+    .clk(clk), .rst(rst_sw), .en_up(tick_10ms && en_sw), ...);
+bcd_count2 #(.max1(5), .max0(9)) u_sw_sec ( ... .en_up(carry_f2s) ... );
+bcd_count2 #(.max1(5), .max0(9)) u_sw_min ( ... .en_up(carry_s2m_sw) ... );
+\end{lstlisting}
+
+\subsubsection*{（3）调时与秒表控制}
+调时需要一个"当前调整对象"状态：按 \texttt{BTNL} 在秒/分/时之间循环，\texttt{set\_signal} 用 2 位 \texttt{set} 寄存器记住位置，再把 \texttt{BTNU}/\texttt{BTND} 的加/减脉冲分发到对应单元：
+
+\begin{lstlisting}
+always @(posedge clk)
+    if (set_edge) set <= set==2'd2 ? 2'd0 : set+2'd1;   // 秒 -> 分 -> 时 循环
+assign up_s = mode==1'b0 && set==2'd0 && up_edge;        // 只在时钟模式下生效
+assign down_s = mode==1'b0 && set==2'd0 && down_edge;
+// ... up_m/down_m、up_h/down_h 同理
+\end{lstlisting}
+
+秒表的启停/清零是独立状态，\texttt{sw\_signal} 用 \texttt{BTNC} 翻转一个使能位、\texttt{BTNR} 复位该位；按键抖动由 \texttt{debounce} 消除——用 10\,ms 节拍连续采样两次都一致才认为按键稳定，再对稳定电平做上升沿检测，输出\textbf{单周期}的边沿脉冲：
+
+\begin{lstlisting}
+always @(posedge clk)
+    if (tick_10ms) begin delay1 <= btn; delay2 <= delay1; end   // 10ms 采样两次
+wire btn_stable = delay1 & delay2;                              // 连续两次为高才认键
+always @(posedge clk) stable_delay <= btn_stable;
+assign btn_edge = btn_stable & ~stable_delay;                   // 上升沿 -> 单周期脉冲
+\end{lstlisting}
+
+\subsubsection*{（4）闹钟与显示源选择}
+闹钟比较当前时与开关设定的闹钟时（\texttt{SW[10:7]} 为小时十位、\texttt{SW[6:3]} 为小时个位），相等且当前分为 00 时，让 LED 跟随 100\,ms 节拍翻转（5\,Hz 闪烁）：
+
+\begin{lstlisting}
+always @(posedge clk)
+    if (tick_100ms) blink <= ~blink;             // 100ms 翻转一次 -> 5Hz
+always @(posedge clk)
+    if (mode==0 && en_alarm && alarm_bcd0==clk_h0 &&
+        alarm_bcd1==clk_h1 && clk_m0 == 0 && clk_m1 == 0)
+        alarm <= blink;                          // 到点则闪烁
+    else
+        alarm <= 0;
+\end{lstlisting}
+
+\noindent 显示源用模式开关在两条链之间二选一，清零时统一送 10（\texttt{bcd7seg} 的越界值，输出全灭），因此复位后数码管全灭：
+
+\begin{lstlisting}
+assign bcd0 = !rst ? (mode ? sw_f0 : clk_s0) : 4'd10;   // 最右位：秒个位 / 百分秒个位
+assign bcd1 = !rst ? (mode ? sw_f1 : clk_s1) : 4'd10;
+assign bcd2 = !rst ? (mode ? sw_s0 : clk_m0) : 4'd10;   // 秒表：秒个位  / 时钟：分个位
+assign bcd3 = !rst ? (mode ? sw_s1 : clk_m1) : 4'd10;   // 秒表：秒十位  / 时钟：分十位
+assign bcd4 = !rst ? (mode ? sw_m0 : clk_h0) : 4'd10;   // 秒表：分个位  / 时钟：时个位
+assign bcd5 = !rst ? (mode ? sw_m1 : clk_h1) : 4'd10;   // 秒表：分十位  / 时钟：时十位
+\end{lstlisting}
+
+于是时钟模式下六位从左到右显示"时时 分分 秒秒"，秒表模式下显示"分分 秒秒 百分秒百分秒"。
+
+\subsubsection*{（5）六位动态扫描显示}
+\texttt{bcd\_display6} 把 6 个 \texttt{bcd7seg} 实例的段码接到一个多路选择器上，位选计数器由 1\,ms 节拍推进，扫描一位 1\,ms、一轮 6\,ms，刷新率约 167\,Hz：
+
+\begin{lstlisting}
+always @(posedge clk)
+    if (rst) select <= 3'd0;
+    else if (en) select <= (select == 3'd5) ? 3'd0 : select + 3'd1;   // 0..5 循环
+always @(*)
+    case (select)
+        3'd0: begin seg7 = 8'b11111110; h = h0; end   // 只选通 AN[0]（最右位）
+        3'd1: begin seg7 = 8'b11111101; h = h1; end
+        // ... 依次右移选通位
+        default: begin seg7 = 8'b11111111; h = 7'b1111111; end
+    endcase
+\end{lstlisting}
+
+\subsubsection*{（6）板级端口分配}
+顶层把时钟、按键、开关与数码管接到功能模块上，各控制量的分配见表~\ref{tab:ctrl}。
+
+\begin{table}[htbp]
+    \centering
+    \caption{电子钟开关与按键功能分配}
+    \label{tab:ctrl}
+    \begin{tabular}{lll}
+        \hline
+        板级资源 & 信号 & 功能 \\
+        \hline
+        \texttt{CPU\_RESETN} & \texttt{rst} & 全局清零（低有效，代码内取反成高有效）\\
+        \texttt{SW[1]}  & \texttt{en}        & 时钟走时使能 \\
+        \texttt{SW[0]}  & \texttt{mode}      & 显示模式：0 = 时钟，1 = 秒表 \\
+        \texttt{SW[2]}  & \texttt{en\_alarm} & 闹钟使能 \\
+        \texttt{SW[10:7]} & \texttt{alarm\_bcd1} & 闹钟小时十位 \\
+        \texttt{SW[6:3]}  & \texttt{alarm\_bcd0} & 闹钟小时个位 \\
+        \texttt{BTNL} & \texttt{set\_edge}  & 选择调整对象：秒 $\to$ 分 $\to$ 时 循环 \\
+        \texttt{BTNU} / \texttt{BTND} & \texttt{up\_edge} / \texttt{down\_edge} & 调整对象 加 1 / 减 1 \\
+        \texttt{BTNC} & \texttt{en\_edge}   & 秒表 启动/暂停（每按一次翻转）\\
+        \texttt{BTNR} & \texttt{rst\_edge}  & 秒表清零 \\
+        \texttt{LED[0]} & \texttt{alarm}    & 闹钟到点闪烁 \\
+        \texttt{AN[7:0]}、\texttt{CA..CG}、\texttt{DP} & 数码管 & 6 位十进制显示；未用位与小数点熄灭 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\section{实验过程}
+\begin{enumerate}
+    \item 编写计时器各模块：参数化分频器 \texttt{clkgen.v}、模 60 计数器 \texttt{timer.v}、两位扫描显示 \texttt{display.v} 与 \texttt{bcd7seg.v}，再按 \texttt{top} 包装模式编写 \texttt{top.v}，把逻辑端口映射到 \texttt{SW}/\texttt{LED}/\texttt{AN}。
+    \item 编写约束文件 \texttt{timer.xdc}：从根目录 \texttt{nexysa7.xdc} 复制，仅取消本次用到引脚的注释（\texttt{SW[0]}、\texttt{SW[1]}、\texttt{LED[0]}、\texttt{AN[0..7]}、\texttt{CA..CG}、\texttt{DP}、\texttt{CLK100MHZ}）；未使用的 \texttt{AN[7:2]} 在 \texttt{top.v} 中置 1（熄灭）、\texttt{DP} 置 1。
+    \item 运行 \texttt{build.bat lab03\textbackslash timer} 完成综合、实现，生成比特流 \texttt{build/top.bit}；运行 \texttt{prog.bat lab03\textbackslash timer} 下载到开发板，测试开始/暂停/清零与进位闪烁。
+    \item 编写电子钟各模块：\texttt{tickgen.v}（时基）、\texttt{bcd\_count2.v}（参数化 BCD 加减计数器）、\texttt{debounce.v}（按键消抖）、\texttt{bcd\_display6.v}（六位扫描），再由 \texttt{eclock.v} 例化两条计数链、闹钟比较与显示源选择（内部另含 \texttt{set\_signal}、\texttt{sw\_signal} 两个控制模块）。
+    \item 编写 \texttt{eclock.xdc}：在计时器约束基础上增加 \texttt{CPU\_RESETN}、按键 \texttt{BTNC/BTNU/BTNL/BTNR/BTND} 与 \texttt{SW[10:0]} 的约束；其中 \texttt{SW[8]}、\texttt{SW[9]} 属于 bank 34，保持 \texttt{LVCMOS18} 不变。
+    \item 运行 \texttt{build.bat lab03\textbackslash eclock} 生成比特流并 \texttt{prog.bat} 下载，逐项验证走时、调时、闹钟与秒表功能。
+\end{enumerate}
+
+\autoimg{lab03_timer_build.png}{计时器工程综合与实现完成}{0.7\textwidth}
+\autoimg{lab03_eclock_build.png}{电子钟工程综合与实现完成}{0.7\textwidth}
+
+\section{测试方法}
+本实验的验证以上板实测为主，辅以关键信号的逻辑推导，不使用课程 OJ 判题作为验证手段。之所以\textbf{不以功能仿真为主要手段}，是因为两个设计的时基都由 100\,MHz 分频/分频得到：计时器要观察到一次进位需要 60\,s 的逻辑时间（约 $6\times10^{9}$ 个主时钟周期），电子钟走到分/时进位更要 $10^{4}$\,s 量级，直接仿真的时间与存储代价都过高；若要做短时仿真，可行的做法是把分频参数改小（例如把 \texttt{clk\_freq} 改成 1000，使 1\,Hz 变成 1\,ms）后再观察计数链行为。本次改为在板上直接验证。
+
+\textbf{测试信号的选择}遵守"覆盖边界 + 组合控制"的原则，逐项设计如下。
+
+\textbf{计时器}（测试信号为 \texttt{SW[0]}、\texttt{SW[1]} 的组合与计数值的边界）：
+\begin{itemize}
+    \item \textbf{清零}：拨 \texttt{SW[1]}，数码管应显示 00，且进位 LED 熄灭；
+    \item \textbf{开始/暂停}：\texttt{SW[1]}=0、\texttt{SW[0]}=1，数码管应从 00 逐秒递增；中途把 \texttt{SW[0]} 拨回 0，数字应停住不动，再拨回 1 应从暂停处继续（而不是从 00 重来）；
+    \item \textbf{进位边界}：重点观察 09$\to$10（个位向十位进位）与 59$\to$00（整体回卷）两处，后者应看到 LED 点亮一个 1\,Hz 时钟周期（即亮约 1\,s）；
+    \item \textbf{清零优先级}：先暂停（\texttt{SW[0]}=0），再拨 \texttt{SW[1]}，计数器仍应从暂停状态被清零——这正是本次修掉的一个优先级问题。
+\end{itemize}
+
+\textbf{电子钟}（测试信号为各按键/开关的单独遍历与时间边界）：
+\begin{itemize}
+    \item \textbf{走时与进位}：\texttt{CPU\_RESETN} 清零后置 \texttt{SW[1]}=1，用手机秒表比对 1\,s 节拍，重点观察 59 秒$\to$进分、59 分$\to$进时、23 时$\to$回卷到 00 时 三处边界；
+    \item \textbf{调时}：按 \texttt{BTNL} 逐次切换调整对象（秒/分/时），每档按 \texttt{BTNU}/\texttt{BTND} 各若干次，验证加/减正确、位与位之间不串扰；再验证 00 减 1 应回卷到 59（秒/分）或 23（时）；
+    \item \textbf{闹钟}：把 \texttt{SW[10:7]}/\texttt{SW[6:3]} 设为当前小时，\texttt{SW[2]}=1，等到分钟回到 00 时观察 \texttt{LED[0]} 是否以约 5\,Hz 闪烁；再把闹钟设为别的小时，确认 LED 不亮；
+    \item \textbf{秒表}：\texttt{SW[0]}=1 切入秒表模式，按 \texttt{BTNC} 启动，与手机秒表比对；再按 \texttt{BTNC} 应停住且不清零（暂停），再按应继续；按 \texttt{BTNR} 应清零为全 0；
+    \item \textbf{独立性}：在秒表暂停状态下确认时钟链仍在正常走时（模式开关切回 0 观察），验证两条链的使能/复位互不影响。
+\end{itemize}
+
+\section{实验结果}
+
+\subsection{计时器（3.5.1）}
+下载比特流后上板实测，现象与设计预期一致：
+\begin{itemize}
+    \item \textbf{清零}：拨 \texttt{SW[1]}，两位数码管显示 00，\texttt{LED[0]} 熄灭；
+    \item \textbf{开始与暂停}：\texttt{SW[1]}=0、\texttt{SW[0]}=1 时数码管从 00 逐秒递增；把 \texttt{SW[0]} 拨回 0，显示停在当前值；再拨回 1 从该值继续，未丢失计数；
+    \item \textbf{两位数扫描}：两位数字同时稳定显示、无可见闪烁，个位为右位、十位为左位；
+    \item \textbf{进位边界}：09$\to$10 时十位正确加 1；59$\to$00 时数码管回到 00，同时 \texttt{LED[0]} 点亮约 1\,s（一个 1\,Hz 时钟周期）后熄灭，即"计时结束闪烁一个时钟周期"的现象；
+    \item \textbf{清零优先级}：在暂停（\texttt{SW[0]}=0）状态下拨 \texttt{SW[1]}，计数器仍被清零为 00。
+\end{itemize}
+
+\autoimg{lab03_timer_board.jpg}{计时器上板实测（计数 / 暂停 / 清零 / 进位闪烁）}{0.7\textwidth}
+
+\subsection{电子时钟（3.5.2）}
+电子钟上板实测各功能均正常：
+\begin{itemize}
+    \item \textbf{走时}：按 \texttt{CPU\_RESETN} 后数码管全灭；置 \texttt{SW[1]}=1 开始走时，六位从左到右显示"时时 分分 秒秒"。与手机秒表比对一分钟，误差不可察觉；观察 59 秒$\to$进分、59 分$\to$进时、23 时$\to$回卷 00 时三处边界均正确进位；
+    \item \textbf{调时}：按 \texttt{BTNL} 可在秒$\to$分$\to$时之间循环选择调整对象，再用 \texttt{BTNU}/\texttt{BTND} 对当前对象加/减，每按一次恰好变化 1，无一次多跳；在 00 处减 1 会回卷到 59（秒/分）或 23（时）；
+    \item \textbf{闹钟}：把闹钟时设为当前小时、\texttt{SW[2]}=1，当分钟回到 00 时 \texttt{LED[0]} 开始以约 5\,Hz 闪烁；设为其他小时则不闪烁，\texttt{SW[2]}=0 时任意时刻均不闪烁；
+    \item \textbf{秒表}：\texttt{SW[0]}=1 切入秒表模式后显示"分分 秒秒 百分秒百分秒"，按 \texttt{BTNC} 启动后百分秒以肉眼可见的速度滚动，与手机秒表比对一致；再按 \texttt{BTNC} 数字停住（暂停），再按继续累加，按 \texttt{BTNR} 清零为全 0；
+    \item \textbf{独立性}：秒表暂停期间切回时钟模式，时钟链仍在正常走时，说明两条链的使能与复位互不干扰。
+\end{itemize}
+
+\autoimg{lab03_eclock_board.jpg}{电子钟上板实测：走时（时:分:秒）}{0.7\textwidth}
+\autoimg{lab03_eclock_set.jpg}{电子钟上板实测：调时}{0.65\textwidth}
+\autoimg{lab03_eclock_alarm.jpg}{电子钟上板实测：闹钟 LED 闪烁}{0.65\textwidth}
+\autoimg{lab03_eclock_sw.jpg}{秒表上板实测：启停 / 清零 / 百分秒}{0.7\textwidth}
+
+\section{问题与解决办法}
+\begin{itemize}
+    \item \textbf{数字 9 显示错误}：段码表中 9 误写成 \texttt{7'b0000100}，该值只让 \texttt{C} 段熄灭、其余段全亮，数码管上呈现出缺少右上竖段的畸形字符。原因：段码位序为 $\{g,f,e,d,c,b,a\}$ 且低有效，手写段码时把段位对错了。解决：改为 \texttt{7'b0010000}（只熄灭 \texttt{E} 段），并把该模块从 \texttt{display.v} 中独立成 \texttt{bcd7seg.v}，同时修正了 lab01/lab02 中的同一处错误。
+    \item \textbf{暂停时清零失效}：\texttt{timer.v} 原来把复位写在使能分支内部（\texttt{if (en) begin if (rst) ...}），于是 \texttt{en}=0 时复位信号根本不起作用——暂停后拨清零开关没有任何反应，且清掉的进位标志还会残留。解决：把 \texttt{rst} 提到\textbf{最高优先级}判断，结构改为 \texttt{if (rst) ... else if (en) ...}，清零在任何状态下都有效。
+    \item \textbf{按键抖动导致一次按下触发多次}：机械按键按下/松开瞬间有数毫秒抖动，直接做边沿检测会在一次操作中产生多个脉冲，表现为调时一次跳好几位、秒表启停不受控。解决：增加 \texttt{debounce} 模块，用 10\,ms 节拍连续采样两次且都一致才认定按键稳定，再对稳定电平做上升沿检测，输出单周期脉冲；消抖时间约 20\,ms 且不引入新时钟域。
+    \item \textbf{秒表的清零/启停不能与时钟共用信号}：最初秒表直接共用全局 \texttt{rst} 和走时使能 \texttt{en}，导致暂停秒表会把整只时钟一起停掉、清零秒表也会清掉当前时间。解决：把控制信号拆开——\texttt{rst} 只做全局清零，\texttt{en} 只控制时钟走时，秒表另设 \texttt{rst\_sw}/\texttt{en\_sw}（由 \texttt{sw\_signal} 模块从 \texttt{BTNR}/\texttt{BTNC} 产生），两条链彼此独立。
+    \item \textbf{多个计数器共用一个模块的问题}：时（00--23）、分/秒（00--59）、百分秒（00--99）的进制各不相同，若各写一个计数器代码量成倍增长。解决：把上限做成 \texttt{max1}/\texttt{max0} 参数，并同时实现加、减计数与进位/借位输出，一处代码例化 6 次即覆盖全部计数单元，调时所需的"减到 00 回卷"也由 \texttt{borrow} 链自动完成。
+    \item \textbf{让计数随时钟走而不用多套时钟}：若沿用时器的做法为秒表、扫描、闹钟各分频出一路时钟，就会出现多个时钟域和门控时钟。解决：电子钟统一用 100\,MHz 主时钟，由 \texttt{tickgen} 产生 1\,ms/10\,ms/100\,ms/1\,s 四种单周期使能脉冲，各计数链只在对应节拍上走一步，全部逻辑处于单时钟域。
+    \item \textbf{六位数码管的引脚与资源复用}：6 位数字若各自独立驱动需要 $6\times7=42$ 根段线。解决：用 \texttt{bcd\_display6} 做动态扫描——6 个 \texttt{bcd7seg} 译码结果共享一组段选，位选由 3 位计数器循环推进，每 1\,ms 换一位，总共只用 7 根段线加 8 根位选线。
+\end{itemize}
+
+\section{启示与建议}
+
+\textbf{启示：}
+\begin{enumerate}
+    \item 分频器与使能脉冲是产生时基的两种不同思路：前者输出一个新时钟（计时器题目明确要求），后者在单时钟域内给出"什么时候走一步"。后者不引入新时钟域、不需要额外的时钟约束，在多功能设计中更稳妥，本实验正好各用了一次、体会了两者的差别。
+    \item 模块的参数化能显著降低重复代码：\texttt{clkgen} 一个参数给出 1\,Hz 与 1\,kHz，\texttt{bcd\_count2} 一组上下限参数覆盖 00--23/00--59/00--99 三种进制，\texttt{tickgen} 一个参数给出四路节拍。
+    \item 层次化设计让复杂功能变得可控：电子钟拆成"时基 $\to$ 计数 $\to$ 控制 $\to$ 显示"四层后，各模块都能单独读懂和测试，顶层只是连线。
+    \item 按键消抖、复位优先级、位选/段码的有效极性这些"细节"才是上板最容易出问题的地方——本次三个真实问题（数字 9 段码、暂停时清零失效、按键抖动）都属于这一类，仿真波形上看不出来，必须在板上才能发现。
+    \item 动态扫描是数码管扩展位数的通用手段：靠刷新率远高于人眼分辨能力（本设计约 167\,Hz）来实现"同时显示"。
+\end{enumerate}
+
+\textbf{建议：} 目前的显示未使用小数点 \texttt{DP}，可以把 \texttt{DP} 接出来作为时/分/秒之间的分隔符并让它按 1\,Hz 闪烁，读数会更像一只真实的电子钟；此外也可用 PWM 驱动板载蜂鸣器替代 LED 闪烁，提示效果更明显。
+
+\end{document}
