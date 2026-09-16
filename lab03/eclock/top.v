@@ -3,6 +3,9 @@ module top(
     input  wire CPU_RESETN,                 // 低有效复位
     input  wire BTNR,
     input  wire BTNC,
+    input  wire BTNL,
+    input  wire BTNU,
+    input  wire BTND,
     input  wire [1:0] SW,
     output wire CA, CB, CC, CD, CE, CF, CG, DP,
     output wire [7:0] AN
@@ -23,7 +26,7 @@ module top(
         .clk(CLK100MHZ), .rst(rst), .en(1'b1),   .tick(tick_10ms)
     );
 
-    wire BTNC_edge, BTNR_edge;
+    wire BTNC_edge, BTNR_edge, BTNL_edge, BTNU_edge, BTND_edge;
     debounce btnc(
         .clk(CLK100MHZ),
         .tick_10ms(tick_10ms),
@@ -35,6 +38,24 @@ module top(
         .tick_10ms(tick_10ms),
         .btn(BTNR),
         .btn_edge(BTNR_edge)
+    );
+    debounce btnl(
+        .clk(CLK100MHZ),
+        .tick_10ms(tick_10ms),
+        .btn(BTNL),
+        .btn_edge(BTNL_edge)
+    );
+    debounce btnu(
+        .clk(CLK100MHZ),
+        .tick_10ms(tick_10ms),
+        .btn(BTNU),
+        .btn_edge(BTNU_edge)
+    );
+    debounce btnd(
+        .clk(CLK100MHZ),
+        .tick_10ms(tick_10ms),
+        .btn(BTND),
+        .btn_edge(BTND_edge)
     );
 
     sw_signal sw1(
@@ -57,6 +78,9 @@ module top(
         .en_sw    (en_sw),
         .tick_1s  (tick_1s),
         .tick_10ms(tick_10ms),
+        .set_edge (BTNL_edge),
+        .up_edge  (BTNU_edge),
+        .down_edge(BTND_edge), 
         .mode     (mode),
         .bcd0     (bcd0),
         .bcd1     (bcd1),
