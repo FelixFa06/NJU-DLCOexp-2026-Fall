@@ -18,7 +18,7 @@ module regfile(
 
     //write
     always @(posedge wrclk)
-        if (regwr) begin
+        if (regwr && rw!=5'd0) begin
             regs[rw] <= wrdata;
         end
 	
