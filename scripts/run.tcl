@@ -3,7 +3,6 @@
 set PART      xc7a100tcsg324-1
 set BUILD_DIR ./build
 
-# lab 自带的 IP 生成脚本（如 lab04/mem/ip.tcl）；没有则跳过，不影响其他 lab
 if {[file exists ./ip.tcl]} { source ./ip.tcl }
 
 read_verilog [glob ./*.v]

@@ -2,6 +2,7 @@
 # 由 scripts/run.tcl 通过  source ./ip.tcl  调用（其他 lab 无此文件，自动跳过）
 # 所有产物落在 ./build/ 下，不进版本控制
 set IP_DIR ./build/ip
+file delete -force $IP_DIR
 file mkdir $IP_DIR
 
 create_project -in_memory -part xc7a100tcsg324-1

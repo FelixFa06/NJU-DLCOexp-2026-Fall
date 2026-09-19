@@ -9,6 +9,9 @@ usage_statistics_webtalk.html
 usage_statistics_webtalk.xml
 hs_err_pid*.log
 
+# IP 核派生的初始化镜像（源文件是 .coe），Vivado 可能把它写到 lab 根目录
+*.mif
+
 # 旧 GUI 工程与测试目录备份
 archive/
 

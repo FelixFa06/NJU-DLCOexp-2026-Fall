@@ -25,6 +25,7 @@ if exist webtalk.jou del /q webtalk.jou
 if exist webtalk.log del /q webtalk.log
 del /q *.wdb 2>nul
 del /q *.vcd 2>nul
+del /q *.mif 2>nul
 del /q xsim_*.backup.jou 2>nul
 del /q xsim_*.backup.log 2>nul
 del /q webtalk_*.backup.jou 2>nul
