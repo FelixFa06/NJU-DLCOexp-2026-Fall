@@ -1,0 +1,236 @@
+\documentclass[12pt, a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{left=2.5cm, right=2.5cm, top=3cm, bottom=3cm}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{tikz}
+
+\graphicspath{{figures/}}
+
+% ---------------- 代码高亮设置 ----------------
+\lstset{
+    language=Verilog,
+    basicstyle=\ttfamily\small,
+    frame=single,
+    framesep=5pt,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4
+}
+
+% ---------------- 截图按文件存在与否自动插入 ----------------
+% 图在 figures/ 里就自动插入；不在则跳过（不报错），PDF 可直接编译
+\newcommand{\autoimg}[4][]{\IfFileExists{figures/#2}{%
+    \begin{figure}[htbp]\centering
+    \if\relax\detokenize{#1}\relax
+        \includegraphics[width=#4]{#2}%
+    \else
+        \includegraphics[width=#4,#1]{#2}%
+    \fi
+    \caption{#3}\end{figure}}{}}
+
+% ---------------- 封面信息 ----------------
+\newcommand{\coursename}{数字逻辑与计算机组成实验}
+\newcommand{\expname}{lab04：寄存器堆与存储器}
+\newcommand{\expdate}{2026-09-19}
+\newcommand{\stuname}{法童}
+\newcommand{\stuid}{251250046}
+\newcommand{\stumail}{251250046@smail.nju.edu.cn}
+
+\begin{document}
+
+% 封面
+\begin{titlepage}
+    \centering
+    \vspace*{4cm}
+    {\Huge\bfseries 实验报告\par}
+    \vspace{1.5cm}
+    {\Large \coursename\par}
+    \vspace{0.8cm}
+    {\Large \expname\par}
+    \vspace{3cm}
+    {\large
+    \begin{tabular}{rl}
+        姓名： & \stuname \\
+        学号： & \stuid \\
+        邮箱： & \stumail \\
+        实验时间： & \expdate \\
+    \end{tabular}\par}
+\end{titlepage}
+
+\section{实验目的}
+\begin{enumerate}
+    \item 用行为级描述实现 16$\times$8 的寄存器堆，掌握"读组合、写同步"的写法，并理解它与同步读存储器在时序上的差别。
+    \item 用 Vivado IP 核生成 16$\times$8 单口 RAM，用 \texttt{.coe} 初始化，并弄清单口 RAM 各配置项对端口和读延迟的影响。
+    \item 让两个物理上不同的存储器共用时钟和读写地址，只靠写使能区分读写对象，并把两路读出结果分别用两位数码管显示。
+    \item 通过综合后的 Schematic 与 Report Utilization，观察两者被映射成了什么资源，理解综合器的推断规则。
+\end{enumerate}
+
+\section{实验原理}
+
+寄存器堆的读是\textbf{组合逻辑}的：不需要时钟参与，等价于一个多路选择器，读延迟为 0 个时钟周期。写则由时钟上升沿控制，占 1 个周期。所以 \texttt{assign dout = mem[addr];} 这一句就够描述读通路。
+
+IP 核生成的 RAM 是\textbf{同步读}：地址在上升沿被采样，数据要等下一个上升沿才出现在 \texttt{douta} 上，读延迟 1 个周期。在 Block Memory Generator 里，这个延迟由输出寄存器选项决定——本次把 \texttt{Register\_PortA\_Output\_of\_Memory\_Primitives} 关掉，保持 1 拍。
+
+手册要求两者共用时钟和读写地址，那么同一地址会同时送给两个存储器：寄存器堆当拍就给出该地址的内容，RAM 则要等下一个时钟上升沿。
+
+初始化方面，寄存器堆用 \texttt{\$readmemh}，IP RAM 用 \texttt{.coe}，两者都是在上电加载配置比特流时把初值写进存储单元，\textbf{运行期没有任何信号能把它们清零}。
+
+\section{实验环境与器材}
+\begin{itemize}
+    \item 开发板：Nexys A7-100T（FPGA 型号 xc7a100tcsg324-1）
+    \item 开发工具：Vivado 2020.2（非工程模式，\texttt{build.bat} / \texttt{prog.bat} 脚本驱动）
+    \item 硬件描述语言：Verilog HDL
+\end{itemize}
+
+\section{设计思路}
+
+设计分四层：两个存储器本身（\texttt{regs}、IP 核 \texttt{blk\_mem\_gen\_0}）、把它们并起来的 \texttt{mem}、负责按键与显示的辅助模块（\texttt{debounce}、\texttt{tickgen}、\texttt{hex7seg}、\texttt{display4}），最后由 \texttt{top} 接板级端口。
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[every node/.style={font=\small}]
+        \node[anchor=east] (clk) at (-0.4,2.2) {\texttt{CLK100MHZ}};
+        \node[draw, minimum width=2.4cm, minimum height=1.0cm, align=center] (db) at (2.1,-1.1) {\texttt{debounce}};
+        \node[anchor=east] (btn) at (-0.4,-1.1) {\texttt{BTNC}};
+        \node[draw, minimum width=2.6cm, minimum height=2.4cm, align=center] (mem) at (6.0,1.0) {\texttt{mem}\\[3pt]\scriptsize \texttt{regs} 寄存器堆\\\scriptsize \texttt{blk\_mem\_gen\_0} RAM};
+        \node[draw, minimum width=2.2cm, minimum height=1.0cm, align=center] (hx) at (9.6,2.4) {\texttt{hex7seg} $\times4$};
+        \node[draw, minimum width=2.2cm, minimum height=1.0cm, align=center] (dp) at (9.6,-0.4) {\texttt{display4}\\4 位扫描};
+        \node[anchor=west] (seg) at (11.3,1.0) {4 位数码管};
+        \node[anchor=south] (sw) at (6.0,-1.9) {\texttt{SW[0]} 写使能\quad \texttt{SW[4:1]} 地址\quad \texttt{SW[12:5]} 数据};
+        \draw[->] (btn) -- (db);
+        \draw[->] (db.east) -- node[above, font=\scriptsize]{\texttt{clk}} (mem.west);
+        \draw[->] (sw) -- (mem.south);
+        \draw[->] (mem.east) -- node[above, font=\scriptsize]{\texttt{dout1}} (9.0,2.4);
+        \draw[->] (mem.east) -- node[below, font=\scriptsize]{\texttt{dout2}} (9.0,-0.4);
+        \draw[->] (hx) -- (dp);
+        \draw[->] (dp) -- (seg);
+    \end{tikzpicture}
+    \caption{系统框图}
+    \label{fig:sys}
+\end{figure}
+
+\begin{table}[htbp]
+    \centering
+    \caption{板级资源分配}
+    \label{tab:io}
+    \begin{tabular}{lll}
+        \hline
+        板级资源 & 顶层信号 & 功能 \\
+        \hline
+        \texttt{BTNC} & \texttt{clk} & 存储器的时钟（消抖后的按键上升沿）\\
+        \texttt{SW[0]} & \texttt{we} & 写使能，1 为写、0 为读 \\
+        \texttt{SW[4:1]} & \texttt{addr} & 读写地址 \\
+        \texttt{SW[12:5]} & \texttt{din} & 写入数据 \\
+        \texttt{AN[3:0]}、\texttt{CA..CG} & 数码管 & 左两位显 RAM、右两位显寄存器堆 \\
+        \texttt{AN[7:4]}、\texttt{DP} & —— & 置 1 熄灭 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+寄存器堆一共三行有效逻辑：组合读、同步写、\texttt{\$readmemh} 载入初值。
+
+\begin{lstlisting}
+reg [7:0] regs[15:0];
+initial $readmemh("mem.txt", regs, 0, 15);
+assign dout = regs[addr];              // 组合读，无时钟
+always @(posedge clk) if (we) regs[addr] <= din;   // 同步写
+\end{lstlisting}
+
+IP 核配成单口 RAM：数据宽度 8、深度 16，端口模式取 \texttt{Single\_Port\_RAM}；\texttt{Enable\_A} 设为 \texttt{Always\_Enabled} 后不带 \texttt{ena} 端口，写使能只剩 \texttt{wea}；输出寄存器关闭，读延迟保持 1 拍；上电初值由 \texttt{ram\_init.coe} 载入（初值为 \texttt{f0}--\texttt{ff}）。
+
+\texttt{mem} 把两个存储器并在一起，两者共用 \texttt{clk}/\texttt{we}/\texttt{addr}/\texttt{din}，只是读出分成两路：
+
+\begin{lstlisting}
+regs         u_reg(.clk(clk), .we(we), .addr(addr), .din(din), .dout(dout1));
+blk_mem_gen_0 u_ram(.clka(clk), .wea(we), .addra(addr), .dina(din), .douta(dout2));
+\end{lstlisting}
+
+显示部分把两路 8 位结果各拆成两个十六进制半字节，交给 \texttt{hex7seg} 译码，再由 \texttt{display4} 用 1\,ms 节拍在 4 位数码管之间轮扫（刷新率 250\,Hz）。从左到右依次是 RAM 高位、RAM 低位、寄存器堆高位、寄存器堆低位。
+
+手册允许"只写入 4 位数据"，但本次开关够用，直接用了 8 位（\texttt{SW[12:5]}），省掉一次拼接。
+
+\section{实验过程}
+\begin{enumerate}
+    \item 准备两个初始化文件：\texttt{ram\_init.coe}（初值 \texttt{f0}--\texttt{ff}）供 IP 核使用，\texttt{mem.txt}（初值 \texttt{00}--\texttt{0f}）供寄存器堆使用；并按上节的参数生成 IP 核。
+    \item 编写 \texttt{regs.v}、\texttt{mem.v}、\texttt{top.v} 及各辅助模块，其中时基复用 lab03 的 \texttt{tickgen}，按键消抖复用 \texttt{debounce}。
+    \item 从根目录 \texttt{nexysa7.xdc} 复制约束，取消本次用到引脚的注释：\texttt{BTNC}、\texttt{SW[12:0]}、\texttt{AN[7:0]}、\texttt{CA..CG}、\texttt{DP}；未用的 \texttt{AN[7:4]} 在 \texttt{top.v} 中置 1 熄灭。
+    \item 运行 \texttt{build.bat lab04\textbackslash mem} 完成综合、实现并生成比特流，再 \texttt{prog.bat lab04\textbackslash mem} 下载到板上。
+    \item 在 Vivado 中打开实现后的设计，逐层点入两个存储器观察 Schematic，并出 Report Utilization。
+\end{enumerate}
+
+\autoimg{lab04_build.png}{综合、实现与比特流生成完成}{0.7\textwidth}
+
+\section{测试方法}
+
+本设计没有长时基，地址和数据都由开关直接给定，改动一次开关就能立刻在数码管上看到结果，因此\textbf{以上板实测为主要验证手段}。
+
+\textbf{测试信号的选择}围绕"边界地址 + 读写的先后关系"：
+
+\begin{itemize}
+    \item \textbf{上电初值}：不拨任何开关，地址为 0，应看到寄存器堆读 \texttt{00}、RAM 读 \texttt{f0}，验证两个初始化文件都生效。
+    \item \textbf{遍历地址}：拨 \texttt{SW[4:1]} 走过 0、1、\dots、\texttt{f}，重点看 0 与 \texttt{f} 两端边界，寄存器堆应从 \texttt{00} 递增到 \texttt{0f}，RAM 从 \texttt{f0} 递增到 \texttt{ff}。
+    \item \textbf{写入}：令 \texttt{SW[0]}=1，用 \texttt{SW[12:5]} 给一个新数据，按一次 \texttt{BTNC}，再令 \texttt{SW[0]}=0 读回，确认该地址被改写而其他地址不受影响。
+    \item \textbf{读延迟对比}：把地址从 A 拨到 B 时盯住两个数码管——寄存器堆应立即变成 B 的内容，RAM 则要等下一次按键才更新。这是两者时序差别的直接体现。
+\end{itemize}
+
+\section{实验结果}
+
+上板后现象与设计一致。上电时最右两位显示 \texttt{00}、左两位显示 \texttt{f0}，与 \texttt{mem.txt} 和 \texttt{ram\_init.coe} 的初值相符。拨动地址开关，两路读数分别按 \texttt{00..0f} 与 \texttt{f0..ff} 同步递增。置 \texttt{SW[0]}=1 按一次按键写入后读回，新值正确出现在对应地址上。
+
+读延迟的差异在上板时看得很清楚：地址拨动的瞬间寄存器堆的两位立刻跳变，而 RAM 的两位要等下一次按下按键（即下一个时钟沿）才更新。也就是说，\textbf{完成一次读，寄存器堆用 0 个时钟周期、RAM 用 1 个；完成一次写，两者都是 1 个时钟周期}。
+
+\autoimg{lab04_board_init.jpg}{上电初值：寄存器堆 00、RAM f0}{0.7\textwidth}
+\autoimg{lab04_board_read.jpg}{改变地址后的两路读数}{0.7\textwidth}
+\autoimg{lab04_board_write.jpg}{写入后再读出}{0.7\textwidth}
+
+\subsection{综合后的资源消耗}
+
+从 \texttt{Report Utilization} 看，两个存储器占用的资源完全不同：
+
+\autoimg{lab04_util.png}{Report Utilization 结果}{0.7\textwidth}
+
+IP 核生成的 RAM 用了 \textbf{1 个 Block RAM（RAMB18E1）}，折合 0.5 个 Block RAM Tile。值得一提的是它只存了 $16\times8=128$ bit，却占掉一整块 18\,Kb 的硬件 Block RAM，利用率不到 1\%。
+
+\subsection{Schematic 中的实现方式}
+
+在实现的网表里逐层下钻，两个存储器的映射方式确实不同：
+
+\begin{itemize}
+    \item \textbf{IP 的 RAM}：\texttt{mymem/u\_ram} $\to$ \texttt{U0} $\to$ \texttt{inst\_blk\_mem\_gen} $\to \cdots \to$ \texttt{prim\_init.ram}，最内层是 \textbf{\texttt{RAMB18E1}}，即专用的 Block RAM 硬核。
+    \item \textbf{寄存器堆}：\texttt{mymem/u\_reg} 下面是 \textbf{8 个 \texttt{RAM32X1S}}（另各带一个 \texttt{RAMS32}），即用 LUT 搭出来的分布式 RAM。每个 \texttt{RAM32X1S} 存 1 bit 宽、32 深，8 个拼成 8 bit 宽，正好对应资源表里的 \texttt{LUT as Memory = 8}。
+\end{itemize}
+
+原因在于综合器的推断规则：\texttt{reg [7:0] regs[15:0]} 这种"组合读 + 同步写"的小容量数组是分布式 RAM 的典型形态，综合器自动把它映射到 LUTRAM；而 IP 核是显式指定了 \texttt{blk\_mem\_gen}，综合器就照办用 Block RAM 硬核。
+
+\autoimg{lab04_schematic_ramb.png}{Schematic 中 IP RAM 的最内层：RAMB18E1}{0.85\textwidth}
+\autoimg{lab04_schematic_lutram.png}{Schematic 中寄存器堆的最内层：RAM32X1S}{0.85\textwidth}
+
+
+\section{问题与解决办法}
+
+\begin{itemize}
+    \item \textbf{\texttt{\$readmemh} 报语法错误}：最初把它直接写在模块里（\texttt{reg [7:0] regs[15:0]; \$readmemh(...);}），综合报 \texttt{syntax error near \$readmemh}，随后 \texttt{module regs ignored}。原因是 \texttt{\$readmemh} 属于过程性语句，必须放在 \texttt{initial} 或 \texttt{always} 块内。同时路径也写错了——原先写成 \texttt{"lab04/mem/mem.txt"}，而工作目录本来就是 lab 目录。改为 \texttt{initial \$readmemh("mem.txt", regs, 0, 15);} 后通过。
+
+    \item \textbf{用按键当时钟会触发门控时钟告警}：按手册要求把消抖后的按键边沿直接接到存储器时钟脚，实现后 Vivado 报 \texttt{PDRC-153 Gated clock check}，并提示一个 LUT 驱动了 11 个寄存器的时钟脚、\texttt{PLHOLDVIO-2} 可能产生保持时间违例；\texttt{Power 33-232} 也提示设计里找不到用户定义的时钟。原因是按键边沿经组合逻辑产生了时钟，而不是由时钟引脚驱动。本次按手册要求保留了这个做法（上板实测工作正常），并在报告里记录该告警；若要彻底消除，应改成"用 100\,MHz 主时钟 + 把按键边沿当作写使能脉冲"，功能等价且不再有门控时钟。
+\end{itemize}
+
+\section{启示与建议}
+
+\textbf{启示：}
+
+\begin{enumerate}
+    \item 同一段"存储器"概念，换一种描述方式就换了一种硬件。寄存器堆只因为写成了行为级数组、且读是组合的，就被综合成 LUT 搭的分布式 RAM；调用 IP 核就得到一块专用 Block RAM 硬核。容量小的时候前者省资源，容量大时后者才划算——本次 128\,bit 硬占一个 18\,Kb 硬核。
+    \item 同步读的代价在上板时很直观：同一个地址送给两个存储器，一个立刻响应、一个要等下一拍。这比看波形更容易建立"时序"的直觉，也让我直观的感受到了在计算机系统理论课上学到的“寄存器堆比主存 RAM 通路更简短、读写效率更高”的重要结论。
+\end{enumerate}
+
+\textbf{建议：} 手册上关于创建 IP 核的说明对我来说似乎有点简短，导致我在 Vivado 的 GUI 中研究了好一会才搞清楚应该怎么去配置出一个想要的 IP 核。 如果可以的话我希望实验手册对这段的教学能再细致一些。
+
+\end{document}
