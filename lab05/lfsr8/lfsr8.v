@@ -1,0 +1,12 @@
+module lfsr8(
+    input  [7:0]  seed,
+	input  clk,
+	input  load,
+	output reg [7:0] dout
+);
+    
+    always @(posedge clk) begin
+        dout <= load ? seed : {dout[4]^dout[3]^dout[2]^dout[0], dout[7:1]};
+    end
+
+endmodule
