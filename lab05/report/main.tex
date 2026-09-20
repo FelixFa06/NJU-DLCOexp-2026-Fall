@@ -1,0 +1,270 @@
+% ============================================================
+%  DLCO 实验报告 lab05：移位寄存器与伪随机序列
+%  【编译】整个 lab 目录上传 tex.nju.edu.cn，编译 main.tex，下载 main.pdf 放回本目录
+%  【提交】工程文件 + 报告电子版打包 zip 上传
+%
+%  截图按下列文件名存到 report/figures/ 即自动插入，不需要改 tex
+%    lab05_lfsr_build.png        工程综合/实现/下载成功
+%    lab05_lfsr_sim.png          仿真：装载与手册示例序列
+%    lab05_lfsr_sim_period.png   仿真：第 255 拍回到种子
+%    lab05_lfsr_board.jpg        上板实测的数码管读数
+%
+%  【照片方向】手机照片的旋转角度记在 EXIF 里，LaTeX 不读，会倒着。在 report/ 下
+%  运行 python fix_exif.py 可把方向焊进像素；个别图也可用
+%  \autoimg[angle=180]{...}{...}{...} 兜一下。
+% ============================================================
+\documentclass[12pt, a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{left=2.5cm, right=2.5cm, top=3cm, bottom=3cm}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{tikz}
+
+\graphicspath{{figures/}}
+
+% ---------------- 代码高亮设置 ----------------
+\lstset{
+    language=Verilog,
+    basicstyle=\ttfamily\small,
+    frame=single,
+    framesep=5pt,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4
+}
+
+% ---------------- 截图按文件存在与否自动插入 ----------------
+% 图在 figures/ 里就自动插入；不在则跳过（不报错），PDF 可直接编译
+\newcommand{\autoimg}[4][]{\IfFileExists{figures/#2}{%
+    \begin{figure}[htbp]\centering
+    \if\relax\detokenize{#1}\relax
+        \includegraphics[width=#4]{#2}%
+    \else
+        \includegraphics[width=#4,#1]{#2}%
+    \fi
+    \caption{#3}\end{figure}}{}}
+
+% ---------------- 封面信息 ----------------
+\newcommand{\coursename}{数字逻辑与计算机组成实验}
+\newcommand{\expname}{lab05：移位寄存器与伪随机序列}
+\newcommand{\expdate}{2026-09-20}
+\newcommand{\stuname}{法童}
+\newcommand{\stuid}{251250046}
+\newcommand{\stumail}{251250046@smail.nju.edu.cn}
+
+\begin{document}
+
+% 封面
+\begin{titlepage}
+    \centering
+    \vspace*{4cm}
+    {\Huge\bfseries 实验报告\par}
+    \vspace{1.5cm}
+    {\Large \coursename\par}
+    \vspace{0.8cm}
+    {\Large \expname\par}
+    \vspace{3cm}
+    {\large
+    \begin{tabular}{rl}
+        姓名： & \stuname \\
+        学号： & \stuid \\
+        邮箱： & \stumail \\
+        实验时间： & \expdate \\
+    \end{tabular}\par}
+\end{titlepage}
+
+\section{实验目的}
+\begin{enumerate}
+    \item 用 8 位移位寄存器加异或反馈实现 LFSR，得到周期为 $2^8-1=255$ 的伪随机序列。
+    \item 把消抖后的按键上升沿当作移位寄存器的时钟，做到按一次键正好走一步。
+    \item 用两位数码管以十六进制显示寄存器的当前值，在上板观察序列的变化。
+    \item 用仿真验证序列的周期、状态遍历性，以及全零这一退化状态的处理。
+\end{enumerate}
+
+\section{实验原理}
+
+LFSR 的次态由"移位"和"反馈"两部分决定：整串状态右移一位，空出来的最高位由若干抽头异或得到。本次取 $x_7x_6x_5x_4x_3x_2x_1x_0$ 的低四位参与反馈：
+\[
+x_8=x_4\oplus x_3\oplus x_2\oplus x_0
+\]
+把这条递推关系写成特征多项式，就是 $x^8+x^4+x^3+x^2+1$。该多项式是本原多项式，所以从任一非零状态出发，寄存器会不重不漏地走完全部 $2^8-1=255$ 个非零状态再回到起点，序列周期为 255。
+
+全零是这套结构唯一的不动点：反馈项 $0\oplus0\oplus0\oplus0=0$，移进来的还是 0，寄存器会永远停在 00000000。它不属于那 255 个状态所在的环，所以装载时必须显式处理。
+
+按键不能直接当时钟。机械触点在按下和松开时都会抖动，一次按下可能产生几十个边沿，寄存器会一下子连走好几步。因此先用 10\,ms 节拍对按键采样，连续两次都是 1 才认为真的按下了，再对这个稳定电平取上升沿，得到一个 100\,MHz 时钟周期宽的脉冲——它既做消抖，又保证一次按下只产生一个时钟。
+
+\section{实验环境与器材}
+\begin{itemize}
+    \item 开发板：Nexys A7-100T（FPGA 型号 xc7a100tcsg324-1）
+    \item 开发工具：Vivado 2020.2（非工程模式，\texttt{build.bat} / \texttt{sim.bat} / \texttt{prog.bat} 脚本驱动）
+    \item 硬件描述语言：Verilog HDL
+\end{itemize}
+
+\section{设计思路}
+
+整个设计分三层：时基与按键处理（\texttt{tickgen}、\texttt{debounce}）、伪随机序列本体（\texttt{lfsr}）、显示（\texttt{hex7seg}、\texttt{display2}），最后由 \texttt{top} 接板级端口。
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[every node/.style={font=\small}]
+        % 顶部一条时钟母线，两个时基模块都挂在上面（先画线，再让方框盖住中段）
+        \draw (1.9,4.6) -- (7.15,4.6);
+        \node[anchor=west] (clk) at (0,4.6) {\texttt{CLK100MHZ}};
+        \node[draw, minimum width=2.9cm, minimum height=0.75cm, fill=white] (tk2) at (4.2,4.6) {\texttt{tickgen} 10\,ms};
+        \node[draw, minimum width=2.9cm, minimum height=0.75cm, fill=white] (tk1) at (8.6,4.6) {\texttt{tickgen} 1\,ms};
+        \node[anchor=west] (btn) at (0.9,2.6) {\texttt{BTNC}};
+        \node[draw, minimum width=2.4cm, minimum height=0.75cm] (db) at (4.2,2.6) {\texttt{debounce}};
+        \node[draw, minimum width=3.4cm, minimum height=1.3cm, align=center] (lf) at (7.4,2.6)
+            {\texttt{lfsr}\\[2pt]\scriptsize $x_8=x_4\oplus x_3\oplus x_2\oplus x_0$};
+        \node[draw, minimum width=2.3cm, minimum height=0.75cm] (hx) at (10.6,2.6) {\texttt{hex7seg} $\times2$};
+        \node[draw, minimum width=2.3cm, minimum height=0.75cm] (dp) at (10.6,1.4) {\texttt{display2}};
+        \node[anchor=west] (seg) at (12.4,0.4) {2 位数码管};
+        \node[anchor=north] (sw) at (7.4,1.6) {\texttt{SW[8:1]} 种子\quad \texttt{SW[0]} 装载};
+        \draw[->] (tk2.south) -- node[right, font=\scriptsize]{\texttt{tick\_10ms}} (db.north);
+        \draw[->] (btn) -- (db);
+        \draw[->] (db.east) -- node[above, font=\scriptsize]{\texttt{btn\_edge}} (lf.west);
+        \draw[->] (sw.north) -- (lf.south);
+        \draw[->] (lf.east) -- node[above, font=\scriptsize]{\texttt{dout}} (hx.west);
+        \draw[->] (hx.south) -- (dp.north);
+        % 1 ms 节拍绕到右侧再进 display2，避开中间的模块
+        \draw[->] (tk1.south) -- (8.6,3.4) -- (12.4,3.4) -- (12.4,1.4) -- (dp.east)
+            node[pos=0.5, above, font=\scriptsize]{\texttt{tick\_1ms}};
+        \draw[->] (dp.south) -- (10.6,0.4) -- (seg);
+    \end{tikzpicture}
+    \caption{系统框图}
+    \label{fig:sys}
+\end{figure}
+
+\begin{table}[htbp]
+    \centering
+    \caption{板级资源分配}
+    \label{tab:io}
+    \begin{tabular}{lll}
+        \hline
+        板级资源 & 顶层信号 & 功能 \\
+        \hline
+        \texttt{BTNC} & \texttt{clk} & 移位时钟（消抖后的按键上升沿）\\
+        \texttt{SW[8:1]} & \texttt{seed} & 装载用的 8 位种子 \\
+        \texttt{SW[0]} & \texttt{load} & 装载使能，1 为装载、0 为移位 \\
+        \texttt{AN[1:0]}、\texttt{CA..CG} & 数码管 & 高四位 / 低四位的十六进制显示 \\
+        \texttt{AN[7:2]}、\texttt{DP} & —— & 置 1 熄灭 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+核心模块只有三行有效逻辑：装载时取种子，否则右移一位并把反馈填进最高位。种子加了一个"全零替换成 01"的保护：
+
+\begin{lstlisting}
+//装载全零会锁死在不动点，这里把它替换成 01
+wire [7:0] init = seed | {7'b0, ~|seed};
+
+always @(posedge clk) begin
+    dout <= load ? init : {dout[4]^dout[3]^dout[2]^dout[0], dout[7:1]};
+end
+\end{lstlisting}
+
+\texttt{top} 把种子和装载开关接进核心，时钟则来自按键边沿：
+
+\begin{lstlisting}
+lfsr u_lfsr(
+    .seed(SW[8:1]),
+    .clk(BTNC_edge),      //消抖后的按键上升沿
+    .load(SW[0]),
+    .dout(dout)
+);
+\end{lstlisting}
+
+显示部分把 \texttt{dout} 拆成两个十六进制半字节交给 \texttt{hex7seg} 译码，再由 \texttt{display2} 用 1\,ms 节拍在两位数码管间轮扫（刷新率 500\,Hz）。左边一位显高四位、右边一位显低四位，读数和寄存器的值一致，不用在脑子里对调。
+
+\section{实验过程}
+\begin{enumerate}
+    \item 编写 \texttt{lfsr.v} 与 \texttt{display2.v}，\texttt{top.v} 中时基复用 lab03 的 \texttt{tickgen}、消抖复用 \texttt{debounce}、译码复用 lab04 的 \texttt{hex7seg}。
+    \item 从根目录 \texttt{nexysa7.xdc} 复制约束，取消本次用到引脚的注释：\texttt{CLK100MHZ}、\texttt{SW[8:0]}、\texttt{BTNC}、\texttt{AN[7:0]}、\texttt{CA..CG}、\texttt{DP}。
+    \item 运行 \texttt{build.bat lab05\textbackslash lfsr} 完成综合、实现并生成比特流，再 \texttt{prog.bat lab05\textbackslash lfsr} 下载到板上。
+    \item 编写 \texttt{sim/tb.v}，用 \texttt{sim.bat lab05\textbackslash lfsr} 跑仿真，导出 \texttt{build/top.vcd} 并查看波形。
+\end{enumerate}
+
+\autoimg{lab05_lfsr_build.png}{综合、实现与比特流生成完成}{0.7\textwidth}
+
+\section{测试方法}
+
+\textbf{如何验证：}序列的周期和遍历性是"跑够长才知道"的性质，在板上按 255 次键不现实，所以这部分交给仿真，上板只验证与硬件相关的行为（装载、消抖、译码显示）。仿真里逐拍把 DUT 的状态和测试台自己重算的参考序列比对。
+
+\textbf{测试信号的选择}：
+\begin{itemize}
+    \item \textbf{手册示例序列}：种子取 \texttt{01}，看头五拍是否为 \texttt{80}、\texttt{40}、\texttt{20}、\texttt{10}、\texttt{88}。
+    \item \textbf{从 01 跑满 255 拍}：检查 255 个状态两两不重复、中途不出现全零、第 255 拍回到 \texttt{01}。这三条合起来才说明周期确实是 255 而不是它的某个因数。
+    \item \textbf{装载 00}：全零是退化状态，专门测它是否被保护逻辑替换成 \texttt{01}，而不是锁死。
+    \item \textbf{换种子 \texttt{A5}}：换一个和 \texttt{01} 差得很远的初值，验证周期与种子无关。
+\end{itemize}
+
+\textbf{上板测试}：拨 \texttt{SW[8:1]} 给一个种子并按一次 \texttt{BTNC} 装载，看数码管是否立即显示该种子；之后连按按键，观察读数是否每按一次跳一次、松手不再变化（消抖生效），且读数看上去没有规律。
+
+\section{实验结果}
+
+\subsection{仿真}
+
+\begin{lstlisting}[language={}, numbers=none, frame=single]
+--- case 1: manual example from 01 ---
+  01 -> 80 -> 40 -> 20 -> 10 -> 88
+--- case 2: full period from 01 ---
+  covered 255 distinct nonzero states, back to 01 at step 255
+--- case 3: all-zero seed ---
+  all-zero seed starts from 01 and shifts normally
+--- case 4: another nonzero seed A5 ---
+  covered 255 distinct nonzero states, back to A5 at step 255
+
+[PASS] all checks OK.
+\end{lstlisting}
+
+四条用例全部通过，说明设计满足"周期 255、遍历全部非零状态、全零被替换、周期与种子无关"这几点。
+
+\autoimg{lab05_lfsr_sim.png}{仿真波形：装载 01 后的手册示例序列（\texttt{dout} 以十六进制标注）}{1\textwidth}
+
+\autoimg{lab05_lfsr_sim_period.png}{仿真波形：第 255 拍回到种子 \texttt{A5}}{1\textwidth}
+
+\subsection{上板}
+
+上板后现象与设计一致：\texttt{SW[8:1]} 拨成某个种子、按一次 \texttt{BTNC}，数码管立刻显示该种子的高、低两个半字节；此后每按一次，读数前进一格，松手不再跳动；连续按下时读数的变化看不出规律，但每次按回同一个位置、装载同一个种子，得到的序列完全相同——这正说明它是"伪"随机。
+
+\autoimg{lab05_lfsr_board.jpg}{上板实测：两位数码管显示当前寄存器值}{0.5\textwidth}
+
+\section{问题与解决办法}
+
+\begin{itemize}
+    \item \textbf{约束文件里多留了一个不存在的引脚}：从 \texttt{nexysa7.xdc} 复制时把 \texttt{SW[9]} 也留了下来，而 \texttt{top} 的端口只有 \texttt{SW[8:0]}，综合时报 \texttt{WARNING: [Vivado 12-584] No ports matched 'SW[9]'}，紧接着是 \texttt{CRITICAL WARNING: [Common 17-55] 'set\_property' expects at least one object}。原因是 \texttt{get\_ports} 没匹配到任何对象，属性无从设置。因为本次只用到 9 个开关，把该行重新注释掉即可，告警消失。教训是：约束行必须和顶层端口一一对应，多一行少一行都会报错。
+
+    \item \textbf{装载全零会让序列锁死}：手册明确要求"对全零状态进行特殊处理"，最初的 \texttt{dout <= load ? seed : ...} 没有做这件事，一旦种子拨成全零，寄存器就永远停在 \texttt{00}。修法是给种子加一层保护 \texttt{init = seed | \{7'b0, ~|seed\}}：种子非零时 \texttt{init} 就是种子本身，全零时把最低位强制置 1，退化成种子 \texttt{01}。
+\end{itemize}
+
+\section{思考题}
+
+\textbf{生成的伪随机序列仍然有一定的规律，如何能够生成更加复杂的伪随机序列？}
+
+现有的规律来自两点：一是序列由一条线性递推式决定，只要知道 8 位状态和抽头位置就能往后推任意拍；二是序列的线性复杂度只有 8，用很少的测试位就能反推出整个生成器。对应的改进方向：
+
+\begin{enumerate}
+    \item \textbf{加长寄存器}：$n$ 位本原多项式对应的周期是 $2^n-1$，把宽度从 8 提到 64，周期就从 255 涨到 $2^{64}-1$ 量级，穷举和线性方程组都难以处理。练习里的那道 64 位 \texttt{lfsr} 就是这个思路。
+    \item \textbf{破坏线性}：反馈项里加入与项（非线性反馈移位寄存器 NFSR），或者用非线性函数对状态做滤波后再输出，线性复杂度就不再等于寄存器位数。Grain、Trivium 这类流密码都走这条路。
+    \item \textbf{输出方式}：不要每拍输出整个寄存器。本设计直接把 8 位状态送上数码管，相邻两拍之间明显的移位关系一眼就能看出；如果每拍输出原序列的某个特定排列、或输出状态的某个非线性函数，规律性会弱得多。
+\end{enumerate}
+
+\section{启示与建议}
+
+\textbf{启示：}
+
+\begin{enumerate}
+    \item LFSR 用极小的代价换来了很长的序列：核心只是一个"移位 + 异或"的循环，但正因为状态空间有 255 个非零元素、而反馈恰好把整个空间串成一条链，输出才显得随机。用一个多项式把有限状态空间组织成了一整条环。
+    \item 全零这个不动点提醒我，反馈结构里的退化状态必须单独考虑。“随机”的前提是序列真的在变化。
+\end{enumerate}
+
+\textbf{建议：} 我阅读了本次实验手册之后，对 LSFR 通过一个“移位+异或”的简单算法，就能构造全部伪随机数序列的原理感到很好奇。因此我问了 AI，也查阅了一些百科，才慢慢搞懂这其中线性代数、特征多项式相关的种种新知识，在这个过程中我收获不少。如果实验手册在 LSFR 的原理上能稍作一些简明的讲解，或许能让大家学到更多。
+
+\end{document}
