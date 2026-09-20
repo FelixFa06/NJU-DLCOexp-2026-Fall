@@ -26,7 +26,7 @@ module top(
     
     //核心逻辑-LFSR模块
     wire [7:0] dout;
-    lfsr8 lfsr(
+    lfsr u_lfsr(
         .seed(SW[8:1]),
         .clk(BTNC_edge),
         .load(SW[0]),

@@ -1,4 +1,4 @@
-module lfsr64(
+module lfsr(
     input  [63:0]  seed,
 	input  clk,
 	input  load,

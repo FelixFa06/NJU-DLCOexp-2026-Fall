@@ -1,4 +1,4 @@
-module lfsr8(
+module lfsr(
     input  [7:0]  seed,
 	input  clk,
 	input  load,
