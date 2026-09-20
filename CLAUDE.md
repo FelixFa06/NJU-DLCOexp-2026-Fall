@@ -26,6 +26,8 @@ The `.bat` scripts use `%~dp0` to self-locate, then `cd` into the lab dir and ru
 
 **`top.v` wrapper pattern.** `top` is always the synthesis target (`synth_design -top top`). It maps physical board ports (`SW`, `LED`, seven-segment `CA..CG`/`DP`/`AN`) to the functional module's logical ports. The logic module itself is kept free of board-pin names. Each lab folder is self-contained: `top.v` + `<module>.v` + `<module>.xdc`.
 
+**Lab folder layout.** A lab directory holds only subdirectories: the build folder(s) (`exp1/`, `alu_s/`, `mem/`, …), `oj/`, and `report/`. No source files at the lab root. `lab00` is the one exception — its root *is* a build folder (`top.v` + `lab00.v` + `lab00.xdc` flat), matching the build-folder shape of `lab01/exp1`.
+
 **Constraint derivation.** `nexysa7.xdc` at the root is the pristine Digilent master (all lines commented). Each lab's `.xdc` is a copy with only the used pins uncommented — do **not** hand-write minimal `.xdc` files. `scripts/run.tcl` reads sources via `glob ./*.v` / `glob ./*.xdc`, which resolve relative to the **current directory**, so Vivado must run from inside the lab folder (the `.bat` handles this).
 
 ## Conventions and gotchas
@@ -34,7 +36,7 @@ The `.bat` scripts use `%~dp0` to self-locate, then `cd` into the lab dir and ru
 - **`SW[8]` and `SW[9]` use `IOSTANDARD LVCMOS18`** (bank 34), not `LVCMOS33` like the other switches — keep the master's value when uncommenting.
 - `.bit` / `.vcd` are regenerable build artifacts, **not** tracked by git (`build/` is fully ignored) — regenerate anytime via `build.bat` / `sim.bat`.
 - `archive/` holds the old GUI `.xpr` projects and is gitignored — it is backup only, never build there.
-- `lab01/graycode.v` is a logic module only (no `top.v` / `.xdc`); it isn't a buildable lab folder.
+- **`oj/` holds OJ (online judge) submissions** — e.g. `lab01/oj/graycode.v`, `lab04/oj/clz.v`. Logic modules only (no `top.v` / `.xdc`); they aren't buildable lab folders, and `glob ./*.v` never reaches them because builds run inside the build folder. Include `oj/` wholesale when packaging a lab submission — these are graded alongside the lab.
 
 ## Report
 
