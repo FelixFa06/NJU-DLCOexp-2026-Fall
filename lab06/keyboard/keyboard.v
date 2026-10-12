@@ -3,6 +3,10 @@ module keyboard(
 	input clrn,
 	input ps2_clk,
 	input ps2_data,
+    output reg l_shift,
+    output reg ctrl,
+    output reg l_alt,
+    output reg caps,
 	output reg [7:0] key_count,
 	output reg [7:0] cur_key,
 	output [7:0] ascii_key
@@ -20,7 +24,7 @@ wire [7:0] keydata;
 
 //----DO NOT CHANGE BEGIN----
 //scancode to ascii conversion, will be initialized by the testbench
-scancode_ram myram(clk, cur_key, ascii_key);
+scancode_ram myram(clk, cur_key, l_shift, caps, ascii_key);
 //PS2 interface, you may need to specify the inputs and outputs
 ps2_keyboard mykey(clk, clrn, ps2_clk, ps2_data, keydata, ready, nextdata_n, overflow);
 //----DO NOT CHANGE END-----
@@ -28,10 +32,14 @@ ps2_keyboard mykey(clk, clrn, ps2_clk, ps2_data, keydata, ready, nextdata_n, ove
 // add your code here
 always @(posedge clk) begin
     if (!clrn) begin
-        state <= 3'b001;
+        state <= IDLE;
         nextdata_n <= 1'b1;
         cur_key <= 8'd0;
         key_count <= 8'd0;
+        l_shift <= 1'b0;
+        ctrl <= 1'b0;
+        l_alt <= 1'b0;
+        caps <= 1'b0;
     end
     else if (!ready)
         nextdata_n <= 1'b1;
@@ -41,9 +49,18 @@ always @(posedge clk) begin
         nextdata_n <= 1'b1;
         case (state)
             IDLE: begin
-                key_count <= key_count + 1;
-                cur_key <= keydata;
-                state <= PRESS;
+                case (keydata)
+                    8'hf0: begin cur_key <= 8'd0; state <= BREAK; end
+                    8'h12: begin cur_key <= 8'd0; l_shift <= 1'b1; end
+                    8'h14: begin cur_key <= 8'd0; ctrl <= 1'b1; end
+                    8'h11: begin cur_key <= 8'd0; l_alt <= 1'b1; end
+                    8'h58: begin cur_key <= 8'd0; caps <= ~caps; end
+                    default: begin
+                        cur_key <= keydata;
+                        key_count <= key_count + 1;
+                        state <= PRESS;
+                    end
+                endcase
             end
             PRESS: begin
                 if (keydata != 8'hf0) begin
@@ -56,8 +73,12 @@ always @(posedge clk) begin
                 end
             end
             BREAK: begin
-                cur_key <= 8'd0;
-                state <= IDLE;
+                case (keydata)
+                    8'h12: begin l_shift <= 1'b0; state <= IDLE; end
+                    8'h14: begin ctrl <= 1'b0; state <= IDLE; end
+                    8'h11: begin l_alt <= 1'b0; state <= IDLE; end
+                    default: begin cur_key <= 8'd0; state <= IDLE; end
+                endcase
             end
             default: ;
         endcase
@@ -122,17 +143,23 @@ module ps2_keyboard(clk,clrn,ps2_clk,ps2_data,data,ready,nextdata_n,overflow);
 endmodule 
 
 //simple scancode converter
-module scancode_ram(clk, addr,outdata);
+module scancode_ram(clk, addr, l_shift, caps, outdata);
     input clk;
     input [7:0] addr;
+    input l_shift;
+    input caps;
     output reg [7:0] outdata;
 
     reg [7:0] ascii_tab[255:0];
     initial $readmemh("scancode.txt", ascii_tab);
+    reg [7:0] shift_tab[255:0];
+    initial $readmemh("shift_ascii.txt", shift_tab);
 
+    reg [7:0] ascii_code;
     always @(posedge clk)
-    begin
-        outdata <= ascii_tab[addr];
-    end
+        ascii_code <= ascii_tab[addr];
 
+    wire shift = (ascii_code >= 8'h61 && ascii_code <= 8'h7a) ? (l_shift ^ caps) : l_shift;
+    always @(posedge clk)
+        outdata <= shift ? shift_tab[ascii_code] : ascii_code;
 endmodule

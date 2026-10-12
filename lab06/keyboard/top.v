@@ -3,6 +3,7 @@ module top(
     input CPU_RESETN,
     input PS2_CLK,
     input PS2_DATA,
+    output [3:0] LED,
     output [7:0] AN,
     output CA,CB,CC,CD,CE,CF,CG,DP
 );
@@ -22,6 +23,10 @@ module top(
         .clrn(CPU_RESETN),
         .ps2_clk(PS2_CLK),
         .ps2_data(PS2_DATA),
+        .l_shift(LED[0]),
+        .ctrl(LED[1]),
+        .l_alt(LED[2]),
+        .caps(LED[3]),
         .key_count(key_count),
         .cur_key(cur_key),
         .ascii_key(ascii_key)

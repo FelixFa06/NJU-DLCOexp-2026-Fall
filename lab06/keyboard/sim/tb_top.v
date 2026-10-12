@@ -1,10 +1,11 @@
 `timescale 1ns/1ps
-// PS/2 键盘模块自测：模拟键盘按参考激励码流发帧，检查 key_count / cur_key / ascii_key
+// PS/2 键盘模块自测：模拟键盘按参考激励码流发帧，检查 key_count / cur_key / ascii_key / 修饰键状态
 module tb_top;
     reg clk = 1'b0;
     reg clrn;
     wire ps2_clk, ps2_data;
     wire [7:0] key_count, cur_key, ascii_key;
+    wire l_shift, ctrl, l_alt, caps;
     reg kbd_clk = 1'b1, kbd_data = 1'b1;
     integer errors = 0;
 
@@ -14,10 +15,13 @@ module tb_top;
     keyboard dut(
         .clk(clk), .clrn(clrn),
         .ps2_clk(ps2_clk), .ps2_data(ps2_data),
+        .l_shift(l_shift), .ctrl(ctrl), .l_alt(l_alt), .caps(caps),
         .key_count(key_count), .cur_key(cur_key), .ascii_key(ascii_key)
     );
 
     always #5 clk = ~clk;               // 100 MHz
+
+    localparam NOMOD = 4'b0000;         // {l_shift, ctrl, l_alt, caps}
 
     task tx_bit(input b);
         begin
@@ -39,16 +43,19 @@ module tb_top;
         end
     endtask
 
-    task check(input [7:0] ec, input [7:0] ek, input [7:0] ea);
+    task chk(input [7:0] ec, input [7:0] ek, input [7:0] ea, input [3:0] em);
         begin
-            #2000;                      // 等 ascii_key 的寄存器延迟稳定
-            if (key_count !== ec || cur_key !== ek || ascii_key !== ea) begin
+            #2000;                      // 等 ascii_key 的两级寄存器延迟稳定
+            if (key_count !== ec || cur_key !== ek || ascii_key !== ea ||
+                {l_shift, ctrl, l_alt, caps} !== em) begin
                 errors = errors + 1;
-                $display("  FAIL: count=%0d(exp %0d) key=%02h(exp %02h) ascii=%02h(exp %02h)",
-                         key_count, ec, cur_key, ek, ascii_key, ea);
+                $display("  FAIL: cnt=%0d(exp %0d) key=%02h(exp %02h) asc=%02h(exp %02h) mod=%b(exp %b)",
+                         key_count, ec, cur_key, ek, ascii_key, ea,
+                         {l_shift, ctrl, l_alt, caps}, em);
             end
             else
-                $display("  pass: count=%0d key=%02h ascii=%02h", key_count, cur_key, ascii_key);
+                $display("  pass: cnt=%0d key=%02h asc=%02h mod=%b",
+                         key_count, cur_key, ascii_key, {l_shift, ctrl, l_alt, caps});
         end
     endtask
 
@@ -56,20 +63,61 @@ module tb_top;
         clrn = 1'b0; #200;
         clrn = 1'b1; #200;
 
-        $display("press A (1C)");        send(8'h1C); check(8'd1, 8'h1C, 8'h61);
-        $display("break F0");            send(8'hF0); check(8'd1, 8'h00, 8'h00);
-        $display("release A (1C)");      send(8'h1C); check(8'd1, 8'h00, 8'h00);
-        $display("press S (1B)");        send(8'h1B); check(8'd2, 8'h1B, 8'h73);
-        $display("hold S (1B) #2");      send(8'h1B); check(8'd2, 8'h1B, 8'h73);
-        $display("hold S (1B) #3");      send(8'h1B); check(8'd2, 8'h1B, 8'h73);
-        $display("break F0");            send(8'hF0); check(8'd2, 8'h00, 8'h00);
-        $display("release S (1B)");      send(8'h1B); check(8'd2, 8'h00, 8'h00);
+        // ---- 基本要求回归：无修饰键 ----
+        $display("press A (1C)");         send(8'h1C); chk(8'd1, 8'h1C, 8'h61, NOMOD);
+        $display("hold A (1C) #2");       send(8'h1C); chk(8'd1, 8'h1C, 8'h61, NOMOD);
+        $display("break F0");             send(8'hF0); chk(8'd1, 8'h00, 8'h00, NOMOD);
+        $display("release A (1C)");       send(8'h1C); chk(8'd1, 8'h00, 8'h00, NOMOD);
+        $display("press A (1C) again");   send(8'h1C); chk(8'd2, 8'h1C, 8'h61, NOMOD);
+        $display("break F0");             send(8'hF0); chk(8'd2, 8'h00, 8'h00, NOMOD);
+        $display("release A (1C)");       send(8'h1C); chk(8'd2, 8'h00, 8'h00, NOMOD);
 
-        // 放开后重按同一个键，应再次计数
-        $display("press A (1C) again");  send(8'h1C); check(8'd3, 8'h1C, 8'h61);
-        $display("hold A (1C)");         send(8'h1C); check(8'd3, 8'h1C, 8'h61);
-        $display("break F0");            send(8'hF0); check(8'd3, 8'h00, 8'h00);
-        $display("release A (1C)");      send(8'h1C); check(8'd3, 8'h00, 8'h00);
+        // ---- Shift + 字母：不移出 IDLE，按住期间字符键照常计数 ----
+        $display("press LShift (12)");    send(8'h12); chk(8'd2, 8'h00, 8'h00, 4'b1000);
+        $display("press A (1C)");         send(8'h1C); chk(8'd3, 8'h1C, 8'h41, 4'b1000);
+        $display("hold A (1C)");          send(8'h1C); chk(8'd3, 8'h1C, 8'h41, 4'b1000);
+        $display("break F0");             send(8'hF0); chk(8'd3, 8'h00, 8'h00, 4'b1000);
+        $display("release A (1C)");       send(8'h1C); chk(8'd3, 8'h00, 8'h00, 4'b1000);
+        $display("break F0");             send(8'hF0); chk(8'd3, 8'h00, 8'h00, 4'b1000);
+        $display("release LShift (12)");  send(8'h12); chk(8'd3, 8'h00, 8'h00, NOMOD);
+
+        // ---- Shift + 数字：上档符号 ----
+        $display("press LShift (12)");    send(8'h12); chk(8'd3, 8'h00, 8'h00, 4'b1000);
+        $display("press 1 (16)");         send(8'h16); chk(8'd4, 8'h16, 8'h21, 4'b1000);
+        $display("break F0");             send(8'hF0); chk(8'd4, 8'h00, 8'h00, 4'b1000);
+        $display("release 1 (16)");       send(8'h16); chk(8'd4, 8'h00, 8'h00, 4'b1000);
+        $display("break F0");             send(8'hF0); chk(8'd4, 8'h00, 8'h00, 4'b1000);
+        $display("release LShift (12)");  send(8'h12); chk(8'd4, 8'h00, 8'h00, NOMOD);
+
+        // ---- Caps Lock：翻转一次，按住不放不重复翻转 ----
+        $display("press Caps (58)");      send(8'h58); chk(8'd4, 8'h00, 8'h00, 4'b0001);
+        $display("break F0");             send(8'hF0); chk(8'd4, 8'h00, 8'h00, 4'b0001);
+        $display("release Caps (58)");    send(8'h58); chk(8'd4, 8'h00, 8'h00, 4'b0001);
+        $display("press A (1C)");         send(8'h1C); chk(8'd5, 8'h1C, 8'h41, 4'b0001);
+        $display("break F0");             send(8'hF0); chk(8'd5, 8'h00, 8'h00, 4'b0001);
+        $display("release A (1C)");       send(8'h1C); chk(8'd5, 8'h00, 8'h00, 4'b0001);
+
+        // ---- Caps + Shift 同时：抵消回小写 ----
+        $display("press LShift (12)");    send(8'h12); chk(8'd5, 8'h00, 8'h00, 4'b1001);
+        $display("press A (1C)");         send(8'h1C); chk(8'd6, 8'h1C, 8'h61, 4'b1001);
+        $display("break F0");             send(8'hF0); chk(8'd6, 8'h00, 8'h00, 4'b1001);
+        $display("release A (1C)");       send(8'h1C); chk(8'd6, 8'h00, 8'h00, 4'b1001);
+        $display("break F0");             send(8'hF0); chk(8'd6, 8'h00, 8'h00, 4'b1001);
+        $display("release LShift (12)");  send(8'h12); chk(8'd6, 8'h00, 8'h00, 4'b0001);
+        $display("press Caps (58)");      send(8'h58); chk(8'd6, 8'h00, 8'h00, NOMOD);
+        $display("break F0");             send(8'hF0); chk(8'd6, 8'h00, 8'h00, NOMOD);
+        $display("release Caps (58)");    send(8'h58); chk(8'd6, 8'h00, 8'h00, NOMOD);
+        $display("press A (1C)");         send(8'h1C); chk(8'd7, 8'h1C, 8'h61, NOMOD);
+        $display("break F0");             send(8'hF0); chk(8'd7, 8'h00, 8'h00, NOMOD);
+        $display("release A (1C)");       send(8'h1C); chk(8'd7, 8'h00, 8'h00, NOMOD);
+
+        // ---- Ctrl / Alt：只置 LED，不计入 key_count ----
+        $display("press LCtrl (14)");     send(8'h14); chk(8'd7, 8'h00, 8'h00, 4'b0100);
+        $display("break F0");             send(8'hF0); chk(8'd7, 8'h00, 8'h00, 4'b0100);
+        $display("release LCtrl (14)");   send(8'h14); chk(8'd7, 8'h00, 8'h00, NOMOD);
+        $display("press LAlt (11)");      send(8'h11); chk(8'd7, 8'h00, 8'h00, 4'b0010);
+        $display("break F0");             send(8'hF0); chk(8'd7, 8'h00, 8'h00, 4'b0010);
+        $display("release LAlt (11)");    send(8'h11); chk(8'd7, 8'h00, 8'h00, NOMOD);
 
         if (errors == 0) $display("==== ALL PASS ====");
         else             $display("==== %0d FAILED ====", errors);
