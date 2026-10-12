@@ -17,16 +17,16 @@ module display6_4(
     end
 
     wire [7:0] mask;
-    assign mask = dis4 ? 8'b00000000 : 8'b00001111;
+    assign mask = dis4 ? 8'b00000000 : 8'b00011011;
 
     always @(*) begin
         case (select)
             3'd0: begin seg7 = 8'b11111110 | mask; h = h0; end
             3'd1: begin seg7 = 8'b11111101 | mask; h = h1; end
-            3'd2: begin seg7 = 8'b11111011 | mask; h = h2; end
-            3'd3: begin seg7 = 8'b11110111 | mask; h = h3; end
-            3'd4: begin seg7 = 8'b11101111 | mask; h = h4; end
-            3'd5: begin seg7 = 8'b11011111 | mask; h = h5; end
+            3'd2: begin seg7 = 8'b11110111 | mask; h = h2; end
+            3'd3: begin seg7 = 8'b11101111 | mask; h = h3; end
+            3'd4: begin seg7 = 8'b10111111 | mask; h = h4; end
+            3'd5: begin seg7 = 8'b01111111 | mask; h = h5; end
             default: begin seg7 = 8'b11111111; h = 7'b1111111; end
         endcase
     end
