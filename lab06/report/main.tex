@@ -1,0 +1,388 @@
+% ============================================================
+%  DLCO 实验报告 lab06：状态机及键盘输入
+%  【编译】整个 lab 目录上传 tex.nju.edu.cn，编译 main.tex，下载 main.pdf 放回本目录
+%  【提交】工程文件 + 报告电子版打包 zip 上传
+%
+%  截图按下列文件名存到 report/figures/ 即自动插入，不需要改 tex
+%    lab06_keyboard_build.png        工程综合/实现/比特流生成完成
+%    lab06_keyboard_board.png        上板：键码 + ASCII + 按键次数
+%    lab06_keyboard_board_shift.png  上板：Shift+A 大写与 LED 指示
+%    lab06_keyboard_board_caps.png   上板：Caps 翻转、松开后低四位全灭
+%    lab06_keyboard_schematic.png    综合后 Schematic：顶层与 keyboard 内部的层次
+%
+%  （本次上板照片为 png 格式；其余各次实验仍按 .jpg 命名）
+%
+%  【照片方向】手机照片的旋转角度记在 EXIF 里，LaTeX 不读，会倒着。在 report/ 下
+%  运行 python fix_exif.py 可把方向焊进像素；个别图也可用
+%  \autoimg[angle=180]{...}{...}{...} 兜一下。
+% ============================================================
+\documentclass[12pt, a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{left=2.5cm, right=2.5cm, top=3cm, bottom=3cm}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{tikz}
+
+\graphicspath{{figures/}}
+
+% ---------------- 代码高亮设置 ----------------
+\lstset{
+    language=Verilog,
+    basicstyle=\ttfamily\small,
+    frame=single,
+    framesep=5pt,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4
+}
+
+% ---------------- 截图按文件存在与否自动插入 ----------------
+% 图在 figures/ 里就自动插入；不在则跳过（不报错），PDF 可直接编译
+\newcommand{\autoimg}[4][]{\IfFileExists{figures/#2}{%
+    \begin{figure}[htbp]\centering
+    \if\relax\detokenize{#1}\relax
+        \includegraphics[width=#4]{#2}%
+    \else
+        \includegraphics[width=#4,#1]{#2}%
+    \fi
+    \caption{#3}\end{figure}}{}}
+
+% ---------------- 封面信息 ----------------
+\newcommand{\coursename}{数字逻辑与计算机组成实验}
+\newcommand{\expname}{lab06：状态机及键盘输入}
+\newcommand{\expdate}{2026-10-12}
+\newcommand{\stuname}{法童}
+\newcommand{\stuid}{251250046}
+\newcommand{\stumail}{251250046@smail.nju.edu.cn}
+
+\begin{document}
+
+% 封面
+\begin{titlepage}
+    \centering
+    \vspace*{4cm}
+    {\Huge\bfseries 实验报告\par}
+    \vspace{1.5cm}
+    {\Large \coursename\par}
+    \vspace{0.8cm}
+    {\Large \expname\par}
+    \vspace{3cm}
+    {\large
+    \begin{tabular}{rl}
+        姓名： & \stuname \\
+        学号： & \stuid \\
+        邮箱： & \stumail \\
+        实验时间： & \expdate \\
+    \end{tabular}\par}
+\end{titlepage}
+
+\section{实验目的}
+\begin{enumerate}
+    \item 掌握 PS/2 的帧格式与采样：把异步的 \texttt{PS2\_CLK}、\texttt{PS2\_DATA} 同步进 100\,MHz 时钟域，在下降沿采样 11 位帧并用奇校验判断合法性。
+    \item 设计状态机解析扫描码集 2 的通码与断码（\texttt{F0} 前缀），统计按键次数，做到按住不放只算一次。
+    \item 用 ROM 完成扫描码到 ASCII 的映射，处理 Shift、Caps Lock 的组合关系，输出大写字母与上档符号。
+    \item 用六位数码管显示键码、ASCII 与按键次数，在 LED 上指示组合键状态。
+\end{enumerate}
+
+\section{实验原理}
+
+\subsection{PS/2 帧格式与采样}
+键盘到主机方向的每一帧是 11 位：1 位起始位（0）、8 位数据位（LSB 先发）、1 位奇校验位、1 位停止位（1）。数据在 \texttt{PS2\_CLK} 的下降沿之后更新、在下一个下降沿之前保持，因此在下降沿处采样最稳。板上 \texttt{PS2\_CLK} 由键盘驱动，空闲时为高，速率约 10\,kHz，远慢于 100\,MHz 系统时钟。
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[every node/.style={font=\scriptsize}, x=0.85cm, y=0.8cm]
+        \foreach \x/\t in {0/0,1/D0,2/D1,3/D2,4/D3,5/D4,6/D5,7/D6,8/D7,9/P,10/1}{%
+            \draw (\x,0) rectangle ++(1,0.8);
+            \node at (\x+0.5,0.4) {\t};
+        }
+        \node[below] at (0.5,-0.05) {起始位};
+        \node[below] at (4.5,-0.05) {8 位数据（LSB 先发）};
+        \node[below] at (9.5,-0.05) {奇校验};
+        \node[below] at (10.5,-0.05) {停止位};
+    \end{tikzpicture}
+    \caption{键盘到主机的 PS/2 帧格式（共 11 位，在 \texttt{PS2\_CLK} 下降沿处采样）}
+\end{figure}
+
+\texttt{PS2\_CLK} 与系统时钟无关，直接把它当时钟会引入亚稳态，因此先用 \texttt{clk} 对它打三拍同步，再取同步结果里的下降沿作为采样时刻：
+
+\begin{lstlisting}
+reg [2:0] ps2_clk_sync;
+always @(posedge clk) ps2_clk_sync <= {ps2_clk_sync[1:0], ps2_clk};
+wire sampling = ps2_clk_sync[2] & ~ps2_clk_sync[1];   //同步后的下降沿
+\end{lstlisting}
+
+\noindent 每采到一位移入 \texttt{buffer}，收满 10 位后检查起始位为 0、停止位为 1、\texttt{\textasciicircum buffer[9:1]} 为 1，三项都满足才把 \texttt{buffer[8:1]} 写入 8 深度的 FIFO 并置起 \texttt{ready}。
+
+\subsection{扫描码集 2：通码、断码与重发}
+按下键时先发该键的\textbf{通码}；松开时先发固定的前缀 \texttt{F0}、再发该键的通码，两个字节合起来是\textbf{断码}。例如 A 的通码是 \texttt{1C}，松开 A 时依次收到 \texttt{F0}、\texttt{1C}。"按下"占 1 字节、"松开"占 2 字节，长度不同，正好用三个状态描述：\texttt{IDLE} 等一个通码，\texttt{PRESS} 表示该字符键仍被按住，\texttt{BREAK} 在等断码的第二个字节。
+
+按住不放时键盘会周期性重发通码。\texttt{PRESS} 就是用来吸收这些重发的：只有收到 \texttt{F0} 才算松开，中途到达的重发码既不改变显示也不计数。
+
+修饰键不产生字符，它们的通码（\texttt{12} Shift、\texttt{14} Ctrl、\texttt{11} Alt、\texttt{58} Caps Lock）在 \texttt{IDLE} 中单独识别：Shift / Ctrl / Alt 置位标志，Caps Lock 翻转标志，然后留在 \texttt{IDLE} 等下一个键，不进 \texttt{PRESS} 也不计数；对应的松开（同样是 \texttt{F0} + 通码）在 \texttt{BREAK} 中清标志。
+
+\subsection{扫描码到 ASCII 的映射}
+字符键的映射用一张 $256\times8$ 的 ROM 完成：地址是扫描码、数据是 ASCII 码，初始化时用 \texttt{\$readmemh} 读入 \texttt{scancode.txt}；ROM 输出再经第二张表 \texttt{shift\_ascii.txt} 得到按住 Shift 时的字符。
+
+Shift 与 Caps Lock 对字母的作用相同，同时按下又互相抵消，而 Caps Lock 不影响数字与符号，因此判定写成：
+
+\begin{lstlisting}
+wire shift = (ascii_code >= 8'h61 && ascii_code <= 8'h7a) ? (l_shift ^ caps) : l_shift;
+\end{lstlisting}
+
+\noindent 只有基表给出小写字母（\texttt{61}--\texttt{7A}）时才把 Caps 计入，数字与符号只由 Shift 决定。
+
+\section{实验环境与器材}
+\begin{itemize}
+    \item 开发板：Nexys A7-100T（FPGA 型号 xc7a100tcsg324-1），板载 PS/2 接口
+    \item 开发工具：Vivado 2020.2（非工程模式，\texttt{build.bat} / \texttt{sim.bat} / \texttt{prog.bat} 脚本驱动）
+    \item 硬件描述语言：Verilog HDL
+    \item 输入设备：PS/2 键盘
+\end{itemize}
+
+\section{设计思路}
+
+设计分三层：PS/2 底层接收（\texttt{ps2\_keyboard}）、扫描码解析与映射（\texttt{keyboard} 状态机 + \texttt{scancode\_ram}）、显示与指示（\texttt{hex7seg}、\texttt{display6\_4}），由 \texttt{top} 接板级端口。
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[every node/.style={font=\small}]
+        \node[anchor=east] (clk) at (-0.3,5.4) {\texttt{CLK100MHZ}};
+        \node[draw, minimum width=2.4cm, minimum height=0.8cm] (tg) at (2.0,5.4) {\texttt{tickgen} 1\,ms};
+        \node[anchor=east] (ps2) at (-0.3,3.6) {\texttt{PS2\_CLK}/\texttt{PS2\_DATA}};
+        \node[draw, minimum width=2.5cm, minimum height=1.2cm, align=center] (ifc) at (2.05,3.6)
+            {\texttt{ps2\_keyboard}\\\scriptsize 边沿采样 + FIFO};
+        % keyboard.v 内部
+        \draw[dashed] (3.9,1.3) rectangle (8.7,4.9);
+        \node[anchor=north west, font=\scriptsize] at (3.95,4.85) {\texttt{keyboard.v}};
+        \node[draw, minimum width=3.6cm, minimum height=1.2cm, align=center] (fsm) at (6.3,3.6)
+            {扫描状态机\\\scriptsize IDLE / PRESS / BREAK};
+        \node[draw, minimum width=3.6cm, minimum height=1.1cm, align=center] (rom) at (6.3,1.9)
+            {\texttt{scancode\_ram}\\\scriptsize 扫描码 $\to$ ASCII};
+        % 显示与指示
+        \node[draw, minimum width=2.1cm, minimum height=2.2cm, align=center] (hx) at (10.6,3.0)
+            {\texttt{hex7seg}\\$\times6$};
+        \node[draw, minimum width=2.1cm, minimum height=0.8cm] (dp) at (10.6,1.0) {\texttt{display6\_4}};
+        \node[anchor=north] (seg) at (10.6,0.3) {6 位数码管};
+        \draw[->] (clk) -- (tg);
+        \draw[->] (ps2) -- (ifc);
+        \draw[->] (ifc.east) -- node[above, font=\scriptsize]{\texttt{keydata}} (3.9,3.6);
+        \draw[->] (fsm.south) -- node[right, font=\scriptsize]{\texttt{cur\_key}, \texttt{l\_shift}, \texttt{caps}} (rom.north);
+        \draw[->] (8.1,3.9) -- node[above, font=\scriptsize, pos=0.45]{\texttt{cur\_key}, \texttt{key\_count}} (9.55,3.9);
+        \draw[->] (8.1,2.2) -- node[below, font=\scriptsize, pos=0.45]{\texttt{ascii\_key}} (9.55,2.2);
+        \draw[->] (8.1,4.5) -- (9.4,4.5) node[right] {\texttt{LED[3:0]} 组合键指示};
+        \draw[->] (hx.south) -- (dp.north);
+        \draw[->] (dp.south) -- (seg.north);
+        \draw[->] (tg.east) -- (13.2,5.4) -- (13.2,1.0) -- (dp.east)
+            node[pos=0.35, right, font=\scriptsize]{\texttt{tick\_1ms}};
+    \end{tikzpicture}
+    \caption{系统框图}
+    \label{fig:sys}
+\end{figure}
+
+\begin{table}[htbp]
+    \centering
+    \caption{板级资源分配}
+    \label{tab:io}
+    \begin{tabular}{lll}
+        \hline
+        板级资源 & 顶层信号 & 功能 \\
+        \hline
+        \texttt{CLK100MHZ} & \texttt{CLK100MHZ} & 100\,MHz 系统时钟（采样与时基）\\
+        \texttt{CPU\_RESETN} & \texttt{clrn} & 复位（低有效）\\
+        \texttt{PS2\_CLK}、\texttt{PS2\_DATA} & 同名 & PS/2 键盘的时钟与数据 \\
+        \texttt{LED[0..3]} & \texttt{l\_shift}/\texttt{ctrl}/\texttt{l\_alt}/\texttt{caps} & 组合键状态指示 \\
+        \texttt{AN[1:0]} & \texttt{cur\_key} & 当前键码（十六进制，低两位）\\
+        \texttt{AN[4:3]} & \texttt{ascii\_key} & 对应 ASCII 码（十六进制，中间两位）\\
+        \texttt{AN[7:6]} & \texttt{key\_count} & 按键总次数（十六进制，最高两位）\\
+        \texttt{AN[5]}、\texttt{AN[2]} & —— & 恒灭，三组读数之间的空位 \\
+        \texttt{CA..CG}、\texttt{DP} & 段选 & 段码输出；\texttt{DP} 置 1 熄灭 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+扫描状态机是本次的核心，三个状态下的动作见下表。计数只发生在 \texttt{IDLE} 收到字符键通码的那一刻，这就是"按住不放只算一次"的实现。
+
+\begin{table}[htbp]
+    \centering
+    \caption{扫描状态机的状态转移}
+    \label{tab:state}
+    \begin{tabular}{llll}
+        \hline
+        状态 & 收到的 \texttt{keydata} & 动作 & 次态 \\
+        \hline
+        \texttt{IDLE} & \texttt{F0} & \texttt{cur\_key}$\leftarrow$0 & \texttt{BREAK} \\
+        \texttt{IDLE} & \texttt{12}/\texttt{14}/\texttt{11} & 置位对应修饰键标志，\texttt{cur\_key}$\leftarrow$0 & \texttt{IDLE} \\
+        \texttt{IDLE} & \texttt{58} & \texttt{caps}$\leftarrow$\texttt{\textasciitilde caps}，\texttt{cur\_key}$\leftarrow$0 & \texttt{IDLE} \\
+        \texttt{IDLE} & 其他（字符键通码） & \texttt{cur\_key}$\leftarrow$\texttt{keydata}，\texttt{key\_count}+1 & \texttt{PRESS} \\
+        \texttt{PRESS} & 不等于 \texttt{F0}（长按重发） & 保持 \texttt{cur\_key}，不计数 & \texttt{PRESS} \\
+        \texttt{PRESS} & \texttt{F0} & \texttt{cur\_key}$\leftarrow$0 & \texttt{BREAK} \\
+        \texttt{BREAK} & \texttt{12}/\texttt{14}/\texttt{11} & 清对应修饰键标志 & \texttt{IDLE} \\
+        \texttt{BREAK} & 其他 & \texttt{cur\_key}$\leftarrow$0 & \texttt{IDLE} \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\begin{lstlisting}
+IDLE: case (keydata)
+    8'hf0: begin cur_key <= 8'd0; state <= BREAK; end     //断码前缀
+    8'h12: begin cur_key <= 8'd0; l_shift <= 1'b1; end    //修饰键只置标志，不计数
+    8'h14: begin cur_key <= 8'd0; ctrl    <= 1'b1; end
+    8'h11: begin cur_key <= 8'd0; l_alt   <= 1'b1; end
+    8'h58: begin cur_key <= 8'd0; caps    <= ~caps; end   //Caps 按一次翻转一次
+    default: begin                                        //字符键通码：在这里计数
+        cur_key   <= keydata;
+        key_count <= key_count + 1;
+        state     <= PRESS;
+    end
+endcase
+PRESS: begin
+    if (keydata != 8'hf0) cur_key <= keydata;             //重发码：保持显示、不计数
+    else begin cur_key <= 8'd0; state <= BREAK; end
+end
+BREAK: begin                                              //断码的第二个字节
+    case (keydata)
+        8'h12: l_shift <= 1'b0;                           //松开哪位修饰键就清哪个标志
+        8'h14: ctrl    <= 1'b0;
+        8'h11: l_alt   <= 1'b0;
+        default: cur_key <= 8'd0;                         //字符键松开：清键码
+    endcase
+    state <= IDLE;
+end
+\end{lstlisting}
+
+显示部分把三个字节各拆成两个十六进制半字节交给 \texttt{hex7seg} 译码，再由 \texttt{display6\_4} 以 1\,ms 节拍轮扫；三组读数各占两位、中间留一格空位：
+
+\begin{lstlisting}
+hex7seg hex7seg0(cur_key[3:0],   h0);   //AN[0]：键码低位
+hex7seg hex7seg1(cur_key[7:4],   h1);   //AN[1]：键码高位
+hex7seg hex7seg2(ascii_key[3:0], h2);   //AN[3]：ASCII 低位
+hex7seg hex7seg3(ascii_key[7:4], h3);   //AN[4]：ASCII 高位
+hex7seg hex7seg4(key_count[3:0], h4);   //AN[6]：次数低位
+hex7seg hex7seg5(key_count[7:4], h5);   //AN[7]：次数高位
+\end{lstlisting}
+
+\noindent 手册要求"按键松开时低四位全灭"，该状态等价于 \texttt{cur\_key} 为 0，用位选掩码实现：
+
+\begin{lstlisting}
+wire dis4 = (cur_key != 8'd0);
+assign mask = dis4 ? 8'b00000000 : 8'b00011011;   //松开时熄灭 AN[0]/[1]/[3]/[4]
+\end{lstlisting}
+
+\section{实验过程}
+\begin{enumerate}
+    \item \texttt{ps2\_keyboard} 完成 \texttt{PS2\_CLK} 的同步与边沿采样、奇校验判断与 8 深度 FIFO，并按 \texttt{ready}/\texttt{nextdata\_n} 握手输出扫描码。
+    \item 编写 \texttt{keyboard.v} 的扫描状态机（\texttt{IDLE}/\texttt{PRESS}/\texttt{BREAK}），输出 \texttt{cur\_key}、\texttt{key\_count} 与四个修饰键标志；同文件内例化 \texttt{scancode\_ram}。
+    \item 整理两张 ROM 表：\texttt{scancode.txt} 给出各扫描码的基础字符，\texttt{shift\_ascii.txt} 给出按下 Shift 后的字符。
+    \item 编写 \texttt{top.v}：复用 lab03 的 \texttt{tickgen} 产生 1\,ms 扫描节拍、lab04 的 \texttt{hex7seg}，6 个实例译码后交给 \texttt{display6\_4} 选通六位。
+    \item 从根目录 \texttt{nexysa7.xdc} 复制约束，取消 \texttt{CLK100MHZ}、\texttt{CPU\_RESETN}、\texttt{PS2\_CLK}、\texttt{PS2\_DATA}、\texttt{LED[3:0]}、\texttt{AN[7:0]}、\texttt{CA..CG}、\texttt{DP} 的注释。
+    \item 运行 \texttt{build.bat lab06\textbackslash keyboard} 生成比特流、\texttt{prog.bat} 下载上板；编写 \texttt{sim/tb\_top.v}，用 \texttt{sim.bat} 跑仿真。
+\end{enumerate}
+
+\autoimg{lab06_keyboard_build.png}{综合、实现与比特流生成完成}{0.7\textwidth}
+
+\section{测试方法}
+
+\textbf{如何验证：}按键的"按下 → 按住 → 松开"由人手在板上产生，长短与重发时刻都不可复现，"松开序列只收到一个 \texttt{F0} 就中断"这类边界更难制造，因此时序相关的验证交给仿真：测试台按 PS/2 帧格式逐位驱动 \texttt{PS2\_CLK} 与 \texttt{PS2\_DATA} 造出按键序列，再比对 \texttt{key\_count}、\texttt{cur\_key}、\texttt{ascii\_key} 与四个修饰键标志。上板只验证与硬件相关的部分：键盘对接、译码显示与 LED 指示。
+
+\textbf{测试信号的选择}按"覆盖三种帧形态 + 覆盖修饰键的两种时序 + 覆盖边界"来设计：
+\begin{itemize}
+    \item \textbf{基本要求}：按 \texttt{A}（通码 \texttt{1C}）后次数为 1、键码 \texttt{1C}、ASCII \texttt{61}；再发一次 \texttt{1C} 模拟长按重发，读数不变；发 \texttt{F0}、\texttt{1C} 模拟松开，键码与 ASCII 清零；再按一次 \texttt{A}，次数为 2。三种帧形态各覆盖一次，即"按住不放只算一次"。
+    \item \textbf{Shift 与字符键}：按 \texttt{12}（只点亮 LED、不计数），再按 \texttt{A} 应得 \texttt{41}（大写 A）。
+    \item \textbf{Shift 与数字}：按 \texttt{16} 应得 \texttt{21}（上档符号 \texttt{!}）。
+    \item \textbf{Caps Lock 与边界}：按一次 \texttt{58} 翻转 \texttt{caps}，再按翻回；\texttt{caps} 下按 \texttt{A} 得 \texttt{41}；\texttt{caps} 与 Shift 同按得 \texttt{61}（抵消）；\texttt{caps} 下按数字 \texttt{16} 仍得 \texttt{31}，即 Caps 不影响数字。
+    \item \textbf{Ctrl 与 Alt}：只点亮 LED，不计入次数。
+\end{itemize}
+
+\noindent（\texttt{mod} 按 $\{$Shift, Ctrl, Alt, Caps$\}$ 的顺序给出 4 位状态。）\textbf{上板测试}：接上键盘，按 \texttt{CPU\_RESETN} 复位后依次按下若干字母、数字与组合键，观察三组读数与 LED 指示。
+
+\section{实验结果}
+
+\subsection{仿真}
+测试台共 50 项检查全部通过，摘录如下（每项在帧结束后等 \texttt{ascii\_key} 的两拍寄存器延迟再比对）：
+
+\begin{lstlisting}[language={}, numbers=none, frame=single]
+press A (1C)
+  pass: cnt=1 key=1c asc=61 mod=0000
+hold A (1C) #2
+  pass: cnt=1 key=1c asc=61 mod=0000      <- 长按重发码不计数
+break F0
+  pass: cnt=1 key=00 asc=00 mod=0000
+release A (1C)
+  pass: cnt=1 key=00 asc=00 mod=0000      <- 松开后键码与 ASCII 清零
+press A (1C) again
+  pass: cnt=2 key=1c asc=61 mod=0000      <- 再按一次才累加
+press LShift (12)
+  pass: cnt=2 key=00 asc=00 mod=1000      <- Shift 只置标志、不计数
+press A (1C)
+  pass: cnt=3 key=1c asc=41 mod=1000      <- Shift+A -> 大写 41
+press 1 (16)
+  pass: cnt=4 key=16 asc=21 mod=1000      <- Shift+1 -> 上档符号 21
+press Caps (58)
+  pass: cnt=4 key=00 asc=00 mod=0001      <- Caps 翻转
+press A (1C)
+  pass: cnt=5 key=1c asc=41 mod=0001      <- Caps 下字母大写
+press LShift (12)
+  pass: cnt=5 key=00 asc=00 mod=1001      <- Caps 与 Shift 同时按下
+press A (1C)
+  pass: cnt=6 key=1c asc=61 mod=1001      <- 两者抵消，回到小写
+press LCtrl (14)
+  pass: cnt=7 key=00 asc=00 mod=0100
+press LAlt (11)
+  pass: cnt=7 key=00 asc=00 mod=0010
+press Caps (58)
+  pass: cnt=7 key=00 asc=00 mod=0001      <- 再次置位 Caps
+press 1 (16) caps on
+  pass: cnt=8 key=16 asc=31 mod=0001      <- Caps 不影响数字
+==== ALL PASS ====
+\end{lstlisting}
+
+长按不重复计数、松开清零、Shift 与 Caps 的组合关系、Caps 不影响数字、修饰键只置 LED 这几点都得到验证，与手册 6.4 的要求一致。
+
+\subsection{上板}
+上板实测现象与设计一致：
+\begin{itemize}
+    \item \textbf{基本显示}：按一次 \texttt{A}，右侧两位显示键码 \texttt{1C}、中间两位显示 ASCII \texttt{61}、最高两位次数为 \texttt{01}；松开后键码与 ASCII 四位全灭，只剩次数。
+    \item \textbf{计数}：按住 \texttt{A} 不放次数不再增加，松开后再按才变成 \texttt{02}；连按不同键逐个累加。
+    \item \textbf{组合键}：按住 Shift 时 \texttt{LED[0]} 亮，此时按 \texttt{A} 显示 \texttt{41}，按数字 1 显示 \texttt{21}。
+    \item \textbf{Caps Lock}：按一次 \texttt{LED[3]} 亮、此后字母显示大写，再按一次熄灭、回到小写；Caps 与 Shift 同按时又回到小写，且不影响数字键。
+    \item \textbf{Ctrl / Alt}：按下时 \texttt{LED[1]}、\texttt{LED[2]} 分别点亮，次数不增加。
+\end{itemize}
+
+\autoimg{lab06_keyboard_board.png}{上板实测：键码、ASCII 与按键次数}{0.7\textwidth}
+\autoimg{lab06_keyboard_board_shift.png}{上板实测：Shift+A 显示大写，LED[0] 指示}{0.65\textwidth}
+\autoimg{lab06_keyboard_board_caps.png}{上板实测：Caps 翻转，松开后低四位全灭}{0.65\textwidth}
+
+\subsection{综合后的 Schematic}
+综合后的网表层次与设计框图一致：\texttt{top} 下面是 \texttt{tickgen}、\texttt{keyboard}、6 个 \texttt{hex7seg} 与 \texttt{display6\_4}，\texttt{keyboard} 下面是 \texttt{ps2\_keyboard}、\texttt{scancode\_ram} 与状态机本身的寄存器。两处存储的映射方式不同：\texttt{scancode\_ram} 的两张 $256\times8$ 字符表是同步读的，被综合到一块 Block RAM 硬核（\texttt{RAMB18E1}）；\texttt{ps2\_keyboard} 里 8 深度 $\times$ 8 位的 FIFO 只有 64 位，走的是 LUT 搭出来的分布式 RAM（\texttt{RAMD32}）。
+
+\autoimg{lab06_keyboard_schematic.png}{综合后的 Schematic：顶层与 \texttt{keyboard} 内部的层次}{0.85\textwidth}
+
+\section{问题与解决办法}
+\begin{itemize}
+    \item \textbf{长按被重复计数}：最初收到通码就计数并回到 \texttt{IDLE}，而键盘按住不放会周期性重发同一个通码，于是一次按住被计成很多次。原因是没有区分"键仍被按住"这一情形。解决：增加 \texttt{PRESS} 状态，只有从它收到 \texttt{F0} 才回到 \texttt{IDLE}，中途的重发码不计数也不清键码。
+    \item \textbf{修饰键被当成普通按键}：最初不识别 \texttt{12}/\texttt{14}/\texttt{11}/\texttt{58}，按下 Shift 被当作字符键计数、还显示出 \texttt{12} 这样的"键码"，松开时 \texttt{F0}+\texttt{12} 又被算一次。解决：在 \texttt{IDLE} 中单独 \texttt{case} 这四个扫描码，只置/翻转标志并留在 \texttt{IDLE}；对应的松开在 \texttt{BREAK} 中用同一个扫描码清标志。两处都要改，否则会出现 Shift 松开后 LED 一直亮着。
+    \item \textbf{Caps Lock 的语义与 Shift 不同}：Caps 是"按一次翻转一次"，若照搬 Shift 的"按住置位、松开清零"，重发码会让标志反复翻转、松开后又清零。解决：在 \texttt{IDLE} 收到 \texttt{58} 时做 \texttt{caps <= \textasciitilde caps}，而 \texttt{F0}+\texttt{58} 在 \texttt{BREAK} 中不修改 \texttt{caps}，这样一次按下恰好翻转一次。
+    \item \textbf{位选重排后熄灭掩码没跟着改}：位选从连续四位改成 \texttt{AN[1:0]}/\texttt{AN[4:3]}/\texttt{AN[7:6]}、组间各留一格空位后，"低四位全灭"不再是连续的低四位，掩码要从 \texttt{8'b00001111} 改成 \texttt{8'b00011011}；否则会灭掉次数的最低位、却在 ASCII 低位留下一个 0。
+    \item \textbf{\texttt{ascii\_key} 有两拍延迟}：\texttt{scancode\_ram} 先寄存基字符、再寄存移位后的结果，共两拍，测试台若在帧结束的当拍比对会读到旧值。解决：比对前多等两拍。这类问题只在仿真中暴露，上板看不出来。
+\end{itemize}
+
+\section{启示与建议}
+
+\textbf{启示：}
+\begin{enumerate}
+    \item 一开始，我没有涉及明确的状态机模式，比如状态空间、转移方程等详细内容，而是凭借经验自行编写一些逻辑，编写和调试起来都缺乏条理。后来我重构了代码逻辑，设计了详细的状态机，运用 IDLE, PRESS, BREAK 三个状态，并梳理相应的转移策略。这样一来时序逻辑、代码结构都变清晰了。我由此认识到状态机的优越性。
+    \item 外部设备的时钟不能直接用来驱动本地逻辑：\texttt{PS2\_CLK} 与 100\,MHz 主时钟无关，先用三级同步器把它带进本地时钟域、再取边沿采样，才不会出现亚稳态。
+    \item 扫描码把"按下"和"松开"编成长度不同的字节序列，再加上长按重发，正好用三个状态对应"等新键""键仍按住""等断码的第二个字节"，把时间上的先后关系拆成了状态转移。
+\end{enumerate}
+
+\textbf{建议：} 单个按键逐个按下松开的过程很容易理解。但涉及组合键、多个按键按不同顺序按下松开，此时的 PS/2 数据流比较复杂，有点难判断。建议手册上适量添加组合键按下松开过程中 PS/2 数据流变化过程的详细说明。
+
+\end{document}
