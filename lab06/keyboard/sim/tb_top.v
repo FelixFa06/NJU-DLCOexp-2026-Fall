@@ -119,6 +119,15 @@ module tb_top;
         $display("break F0");             send(8'hF0); chk(8'd7, 8'h00, 8'h00, 4'b0010);
         $display("release LAlt (11)");    send(8'h11); chk(8'd7, 8'h00, 8'h00, NOMOD);
 
+        // ---- Caps 不影响数字：caps 置位时按数字 1 仍是 31 ----
+        // （本段置于最末，走完 caps 保持置位，测试即结束）
+        $display("press Caps (58)");      send(8'h58); chk(8'd7, 8'h00, 8'h00, 4'b0001);
+        $display("break F0");             send(8'hF0); chk(8'd7, 8'h00, 8'h00, 4'b0001);
+        $display("release Caps (58)");    send(8'h58); chk(8'd7, 8'h00, 8'h00, 4'b0001);
+        $display("press 1 (16) caps on"); send(8'h16); chk(8'd8, 8'h16, 8'h31, 4'b0001);
+        $display("break F0");             send(8'hF0); chk(8'd8, 8'h00, 8'h00, 4'b0001);
+        $display("release 1 (16)");       send(8'h16); chk(8'd8, 8'h00, 8'h00, 4'b0001);
+
         if (errors == 0) $display("==== ALL PASS ====");
         else             $display("==== %0d FAILED ====", errors);
         $finish;
