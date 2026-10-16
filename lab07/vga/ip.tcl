@@ -10,7 +10,7 @@ create_project -in_memory -part xc7a100tcsg324-1
 create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 \
     -module_name blk_mem_gen_0 -dir $IP_DIR
 
-# 12bit 像素 x 327680(640列x512行)，列优先存放，由 picture_1.coe 初始化
+# 12bit 像素 x 327680(640列x512行)，列优先存放，由 picture_2.coe 初始化
 set_property -dict [list \
     CONFIG.Memory_Type {Single_Port_RAM} \
     CONFIG.Write_Width_A {12} \
@@ -18,7 +18,7 @@ set_property -dict [list \
     CONFIG.Enable_A {Always_Enabled} \
     CONFIG.Register_PortA_Output_of_Memory_Primitives {false} \
     CONFIG.Load_Init_File {true} \
-    CONFIG.Coe_File [file normalize ./picture_1.coe] \
+    CONFIG.Coe_File [file normalize ./picture_2.coe] \
 ] [get_ips blk_mem_gen_0]
 
 generate_target all [get_ips blk_mem_gen_0]
