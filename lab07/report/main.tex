@@ -1,0 +1,311 @@
+% ============================================================
+%  DLCO 实验报告 lab07：VGA 接口控制器实现
+%  【编译】整个 lab 目录上传 tex.nju.edu.cn，编译 main.tex，下载 main.pdf 放回本目录
+%  【提交】工程文件 + 报告电子版打包 zip 上传
+%
+%  截图按下列文件名存到 report/figures/ 即自动插入，不需要改 tex
+%    lab07_vga_build.png          工程综合/实现/比特流生成完成
+%    lab07_vga_board_default.jpg  上板：课程默认图（北大楼），对应上板验收
+%    lab07_vga_board_messi.jpg    上板：自定义图（Messi），对应拓展要求
+%    lab07_vga_schematic.png      综合后 Schematic：top 下 tickgen / vga_ctrl / blk_mem_gen_0
+%
+%  【照片方向】手机照片的旋转角度记在 EXIF 里，LaTeX 不读，会倒着。放插图前先读
+%  Orientation，用 Pillow 的 exif_transpose 把方向焊进像素；个别图也可用
+%  \autoimg[angle=180]{...}{...}{...} 兜一下。
+% ============================================================
+\documentclass[12pt, a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{left=2.5cm, right=2.5cm, top=3cm, bottom=3cm}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{tikz}
+
+\graphicspath{{figures/}}
+
+% ---------------- 代码高亮设置 ----------------
+\lstset{
+    language=Verilog,
+    basicstyle=\ttfamily\small,
+    frame=single,
+    framesep=5pt,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4
+}
+
+% ---------------- 截图按文件存在与否自动插入 ----------------
+% 图在 figures/ 里就自动插入；不在则跳过（不报错），PDF 可直接编译
+\newcommand{\autoimg}[4][]{\IfFileExists{figures/#2}{%
+    \begin{figure}[htbp]\centering
+    \if\relax\detokenize{#1}\relax
+        \includegraphics[width=#4]{#2}%
+    \else
+        \includegraphics[width=#4,#1]{#2}%
+    \fi
+    \caption{#3}\end{figure}}{}}
+
+% ---------------- 封面信息 ----------------
+\newcommand{\coursename}{数字逻辑与计算机组成实验}
+\newcommand{\expname}{lab07：VGA 接口控制器实现}
+\newcommand{\expdate}{2026-10-16}
+\newcommand{\stuname}{法童}
+\newcommand{\stuid}{251250046}
+\newcommand{\stumail}{251250046@smail.nju.edu.cn}
+
+\begin{document}
+
+% 封面
+\begin{titlepage}
+    \centering
+    \vspace*{4cm}
+    {\Huge\bfseries 实验报告\par}
+    \vspace{1.5cm}
+    {\Large \coursename\par}
+    \vspace{0.8cm}
+    {\Large \expname\par}
+    \vspace{3cm}
+    {\large
+    \begin{tabular}{rl}
+        姓名： & \stuname \\
+        学号： & \stuid \\
+        邮箱： & \stumail \\
+        实验时间： & \expdate \\
+    \end{tabular}\par}
+\end{titlepage}
+
+\section{实验目的}
+\begin{enumerate}
+    \item 理解 VGA 的行扫描与场扫描过程，掌握 640$\times$480@60 的行、场时序参数与消隐时间。
+    \item 掌握 VGA 接口控制器的设计方法：用像素计数器同时产生行/场同步信号、消隐标志和当前像素坐标。
+    \item 用 Block RAM 实现显存，把“扫到哪个像素”与“这个像素显示什么”解耦，上层只改显存内容就能改变画面，不必关心扫描过程。
+    \item 拓展：自行完成图片到 coe 文件的转换，在显示器上显示自定义图片。
+\end{enumerate}
+
+\section{实验原理}
+
+\subsection{VGA 的行、场时序}
+VGA 接口的模拟信号只有 5 根：R、G、B 三路颜色与 HS、VS 两个同步。板上用不同阻值的电阻把 FPGA 输出的数字信号合成为模拟电压，每种颜色给 4 位亮度信息，因此单色 16 级、三色组合 4096 种颜色。单色只有 16 级，颜色渐变的区域能看出分层，这是 4 位色深的固有限制。显示器逐行扫描，每扫完一帧从左上角重新开始，期间 RGB 不传送像素信息的时段称为行消隐和场消隐。
+
+640$\times$480@60 的一行由四段组成，其中只有第三段在传送像素：
+
+\begin{center}
+\begin{tikzpicture}[every node/.style={font=\scriptsize}]
+    \draw (0,1.2) -- (10,1.2);
+    \foreach \x in {0,1.2,1.8,9.8,10} \draw (\x,1.15) -- (\x,1.25);
+    \node[above] at (0.6,1.28) {96};
+    \node[above] at (1.5,1.28) {48};
+    \node[above] at (5.8,1.28) {640};
+    \node[above] at (9.9,1.28) {16};
+    \node[below] at (0.6,1.15) {同步脉冲};
+    \node[below] at (1.5,1.15) {后沿};
+    \node[below] at (5.8,1.15) {有效显示};
+    \node[below] at (9.9,1.15) {前沿};
+    \draw[thick] (-0.4,0.7) -- (0,0.7) -- (0,0.2) -- (1.2,0.2) -- (1.2,0.7) -- (10.2,0.7);
+    \node[left] at (-0.45,0.45) {\texttt{hsync}};
+\end{tikzpicture}
+\end{center}
+
+\noindent 一行共 $96+48+640+16=800$ 个像素时间，其中 160 个像素时间处于消隐；一帧共 $2+33+480+10=525$ 行，其中 45 行处于消隐。行、场同步都是\textbf{负脉冲}（低电平有效），脉冲宽度分别是 96 个像素时间和 2 行。
+
+像素由 25\,MHz 时钟驱动，一个时钟扫过一个像素点，因此一帧需要 $800\times525=420{,}000$ 个时钟周期，即 16.8\,ms，对应的行频与场频为
+\[
+f_H=\frac{25\,\text{MHz}}{800}=31.25\,\text{kHz},\qquad
+f_V=\frac{31.25\,\text{kHz}}{525}\approx 59.5\,\text{Hz}.
+\]
+标准值是 31.469\,kHz 与 59.94\,Hz，偏差不到 1\%，在显示器容差之内。
+
+这里有一个容易踩的坑：\textbf{消隐期间必须把 RGB 置零}。CRT 的电子束在消隐期仍在扫描，如果这段时间 RGB 仍输出上一个有效像素的电压，亮度会被累加进相邻像素，画面看起来整体偏暗、发灰。所以颜色输出要由消隐标志选通。
+
+\subsection{显存的组织}
+一帧 640$\times$480 个像素、每像素 12 位，共 3.69\,Mbit，超过 Nexys A7-100T 上分布式 RAM 的 1.188\,Mbit 上限，因此显存只能用 Block RAM（板上共 4.86\,Mbit）。
+
+显存单元的排布要和地址的计算方式一起考虑。若按行优先存放，地址为 $v\_addr\times640+h\_addr$，需要一次乘法；若按\textbf{列优先}存放、并给每列预留 512 行的空间，地址就变成
+\[
+\text{addr}=\{h\_addr,\ v\_addr[8{:}0]\}=h\_addr\times512+v\_addr,
+\]
+乘 512 就是把列号左移 9 位，\textbf{用拼接就能实现，不需要任何运算}。代价是每列 480 行真实数据后面要补 32 个空位，显存深度从 $640\times480=307{,}200$ 增加到 $640\times512=327{,}680$。
+
+同时，行号只取低 9 位参与寻址，而 $v\_addr$ 的实际范围是 0$\sim$479，永远到不了填充区，因此填充值取什么都可以，只要把 coe 文件凑够 327{,}680 项即可。
+
+\section{实验环境与器材}
+\begin{itemize}
+    \item 开发板：Nexys A7-100T（FPGA 型号 xc7a100tcsg324-1），板载 VGA 接口
+    \item 开发工具：Vivado 2020.2（非工程模式，\texttt{build.bat} / \texttt{prog.bat} 脚本驱动）
+    \item 硬件描述语言：Verilog HDL
+    \item 输出设备：支持 640$\times$480 的显示器与 VGA 线
+\end{itemize}
+
+\section{设计思路}
+
+系统分三块：时基（\texttt{tickgen}）、扫描控制器（\texttt{vga\_ctrl}）、显存（\texttt{blk\_mem\_gen\_0}），由 \texttt{top} 接板级端口。
+
+\begin{figure}[htbp]
+    \centering
+    \begin{tikzpicture}[every node/.style={font=\small}]
+        \node[anchor=east] (clk) at (-0.3,4.0) {\texttt{CLK100MHZ}};
+        \node[draw, minimum width=2.6cm, minimum height=0.9cm, align=center] (tg) at (2.0,4.0)
+            {\texttt{tickgen}\\\scriptsize 25\,MHz 时基};
+        \node[draw, minimum width=3.4cm, minimum height=2.6cm, align=center] (vc) at (7.2,3.6)
+            {\texttt{vga\_ctrl}\\[4pt]\scriptsize 像素计数器\\\scriptsize 同步/消隐生成\\\scriptsize 坐标计算};
+        \node[draw, minimum width=3.4cm, minimum height=1.4cm, align=center] (ram) at (7.2,1.0)
+            {\texttt{blk\_mem\_gen\_0}\\\scriptsize 12bit $\times$ 327680};
+        \node[anchor=west] (mon) at (10.2,3.6) {显示器};
+        \draw[->] (clk) -- (tg);
+        \draw[->] (tg.east) -- node[above, font=\scriptsize]{\texttt{tick\_25mhz}} (5.5,4.0);
+        \draw[->] (6.3,2.3) -- node[right, font=\scriptsize]{\texttt{h\_addr}, \texttt{v\_addr}} (6.3,1.7);
+        \draw[->] (8.1,1.7) -- node[right, font=\scriptsize]{\texttt{vga\_data}} (8.1,2.3);
+        \draw[->] (vc.east) -- node[above, font=\scriptsize]{\texttt{VGA\_R/G/B}} node[below, font=\scriptsize]{\texttt{HS}, \texttt{VS}} (mon);
+    \end{tikzpicture}
+    \caption{系统框图}
+    \label{fig:sys}
+\end{figure}
+
+\begin{table}[htbp]
+    \centering
+    \caption{板级资源分配}
+    \label{tab:io}
+    \begin{tabular}{lll}
+        \hline
+        板级资源 & 顶层信号 & 功能 \\
+        \hline
+        \texttt{CLK100MHZ} & \texttt{CLK100MHZ} & 100\,MHz 系统时钟 \\
+        \texttt{CPU\_RESETN} & \texttt{reset} & 复位，取反后至高有效 \\
+        \texttt{VGA\_R[3:0]}、\texttt{VGA\_G[3:0]}、\texttt{VGA\_B[3:0]} & 同名 & 三路各 4 位的颜色输出 \\
+        \texttt{VGA\_HS}、\texttt{VGA\_VS} & 同名 & 行、场同步（负脉冲）\\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsection{扫描控制器}
+\texttt{vga\_ctrl} 用两个计数器描述扫描位置：\texttt{x\_cnt} 计一行内的像素，\texttt{y\_cnt} 计帧内的行，两者都以 25\,MHz 时基递增。由这两个计数值直接得到同步、消隐与坐标：
+
+\begin{lstlisting}
+assign hsync = (x_cnt > h_frontporch);                    //低电平脉冲宽 96
+assign vsync = (y_cnt > v_frontporch);                    //低电平脉冲宽 2 行
+assign h_valid = (x_cnt > h_active) & (x_cnt <= h_backporch);
+assign v_valid = (y_cnt > v_active) & (y_cnt <= v_backporch);
+assign valid = h_valid & v_valid;
+assign h_addr = h_valid ? (x_cnt - 10'd145) : {10{1'b0}};  //当前像素坐标
+assign v_addr = v_valid ? (y_cnt - 10'd36)  : {10{1'b0}};
+assign vga_r = valid ? vga_data[11:8] : 4'b0000;           //消隐期置零，避免发暗
+assign vga_g = valid ? vga_data[7:4]  : 4'b0000;
+assign vga_b = valid ? vga_data[3:0]  : 4'b0000;
+\end{lstlisting}
+
+\noindent 其中 \texttt{h\_addr} 取 0$\sim$639、\texttt{v\_addr} 取 0$\sim$479，正好是当前像素在有效显示区内的坐标，交给上层去索引显存。25\,MHz 时基沿用 lab04 的分频器，把 100\,MHz 四分频得到：
+
+\begin{lstlisting}
+tickgen #(.tick_freq(25000000)) u_tick_25mhz (
+    .clk(CLK100MHZ), .rst(1'b0), .en(1'b1), .tick(tick_25mhz)
+);
+\end{lstlisting}
+
+\subsection{显存}
+显存用 \texttt{blk\_mem\_gen} 生成一块单口 Block RAM，宽 12 位、深 327{,}680，使能恒定，读出打一拍，并用 coe 文件初始化。这些配置写在 lab 目录下的 \texttt{ip.tcl} 里，由综合脚本自动调用：
+
+\begin{lstlisting}[language=tcl]
+set_property -dict [list \
+    CONFIG.Memory_Type {Single_Port_RAM} \
+    CONFIG.Write_Width_A {12} \
+    CONFIG.Write_Depth_A {327680} \
+    CONFIG.Enable_A {Always_Enabled} \
+    CONFIG.Load_Init_File {true} \
+    CONFIG.Coe_File [file normalize ./picture_2.coe] \
+] [get_ips blk_mem_gen_0]
+\end{lstlisting}
+
+\noindent 显存只读不写，因此写使能与写数据接常数，地址由两个坐标拼成：
+
+\begin{lstlisting}
+blk_mem_gen_0 u_vram (
+    .clka (CLK100MHZ),
+    .wea  (1'b0),
+    .addra({h_addr, v_addr[8:0]}),    //列号在高位 -> 列优先、步长 512
+    .dina (12'd0),
+    .douta(vga_data)
+);
+\end{lstlisting}
+
+\noindent 需要注意的是 Block RAM 是同步读，\texttt{douta} 比 \texttt{addra} 晚一个时钟。本设计里一个像素占 4 个主时钟，晚一拍只影响其中 1/4 的时间，而显示器是在像素中心采样，静态图片上看不出差别。
+
+\section{实验过程}
+\begin{enumerate}
+    \item 复用 lab04 的 \texttt{tickgen}，把 100\,MHz 四分频得到 25\,MHz 时基。
+    \item 按手册实现 \texttt{vga\_ctrl} 的两个像素计数器与各输出信号；\textbf{颜色输出额外用消隐标志选通}，把手册提到的“画面发暗”问题一并解决。
+    \item 编写 \texttt{ip.tcl}，用 \texttt{blk\_mem\_gen} 生成 12bit $\times$ 327680 的单口 RAM，由课程提供的 \texttt{picture\_1.coe} 初始化。
+    \item 编写 \texttt{top.v}，连接时基、\texttt{vga\_ctrl} 与显存，地址按列优先拼接。
+    \item 从根目录 \texttt{nexysa7.xdc} 复制约束，取消 \texttt{CLK100MHZ}、\texttt{CPU\_RESETN}、\texttt{VGA\_R/G/B}、\texttt{VGA\_HS}、\texttt{VGA\_VS} 的注释。
+    \item 运行 \texttt{build.bat lab07\textbackslash vga} 生成比特流，\texttt{prog.bat} 下载上板，接显示器观察默认图。
+    \item \textbf{拓展要求}：重写 \texttt{coe\_generate.py}，完成图片到 coe 的转换，换上自己的图片重新生成显存并上板。
+\end{enumerate}
+
+\autoimg{lab07_vga_build.png}{综合、实现与比特流生成完成}{0.7\textwidth}
+
+\section{测试方法}
+
+\textbf{如何验证：}本次验证以上板显示为主。
+
+\noindent 先用手册提供的默认图（北大楼，彩色、细节丰富、有明确的天空/建筑/地面层次）做上板验收，再换自定义图片验证拓展要求。
+
+\textbf{上板操作：}接好 VGA 线后 \texttt{prog.bat} 下载，观察显示器；换自定义图时改 \texttt{ip.tcl} 中 \texttt{Coe\_File} 的路径、重新 build 与 prog 即可。
+
+\section{实验结果}
+
+\subsection{上板}
+默认图显示正常：蓝天、灰瓦屋顶、绿树与红色塔顶的位置和颜色与源图一致，画面方向、左右位置都没有偏移，说明像素计数、坐标计算和显存的地址排布三者对得上。
+
+\autoimg{lab07_vga_board_default.jpg}{上板实测：课程默认图（北大楼）正常显示}{0.7\textwidth}
+
+\subsection{拓展要求：显示自定义图片}
+把手册的转换脚本重写为对任意图片都可用，流程是：居中裁剪成 4:3 $\to$ 缩放到 640$\times$480 $\to$ 每通道取高 4 位 $\to$ 按列优先写入、每列补足 512 项。核心的两层循环与填充如下：
+
+\begin{lstlisting}[language=Python]
+vals = []
+for x in range(W):                  # 列优先：外层是列号
+    vals += ["%X%X%X" % (pix[x, y][0] >> 4, pix[x, y][1] >> 4, pix[x, y][2] >> 4)
+             for y in range(H)]
+    vals += [FILL] * (STRIDE - H)   # 每列补到 512
+\end{lstlisting}
+
+\noindent 脚本的正确性用课程提供的 coe 反向校验：把默认图的内容区经本脚本重新转换一遍，生成的 327{,}680 项与 \texttt{picture\_1.coe} \textbf{逐项完全相同}，说明列优先的顺序、512 的步长、填充的位置和取高 4 位的取法都一致。把自己的图片按同一流程转换后替换显存初始化文件，上板显示正常。
+
+\autoimg{lab07_vga_board_messi.jpg}{上板实测：自定义图片正常显示}{0.7\textwidth}
+
+\subsection{综合后的 Schematic}
+综合后的层次与设计框图一致：\texttt{top} 下面是 \texttt{tickgen}、\texttt{vga\_ctrl} 和 \texttt{blk\_mem\_gen\_0}。显存是这次资源消耗的主体，单块 12bit $\times$ 327680 的 Block RAM 占掉 110 块 \texttt{RAMB36}，占全芯片 135 块的 81.5\%；其余逻辑很轻，\texttt{vga\_ctrl} 的两个计数器和组合逻辑一共只用 365 个 LUT、65 个寄存器。
+
+\autoimg{lab07_vga_schematic.png}{综合后的 Schematic：顶层与三块的层次}{0.85\textwidth}
+
+\section{问题与解决办法}
+\begin{itemize}
+    \item \textbf{按手册提供的转换脚本生成的 coe 不能用}：手册给的图片转 coe 代码按图片的高度（480）作为每列的步长来写，而显存的地址是 $\{h\_addr, v\_addr[8{:}0]\}$、步长必须是 512，两者差 32 个填充项。直接拿它生成的 coe 初始化显存，显示出来的图会斜着错位。
+    
+    解决：自己重写转换脚本，在每列 480 行真实数据之后补 32 个填充项凑足 512，并用课程提供的 \texttt{picture\_1.coe} 反向校验转换结果。
+    
+    \item \textbf{上板后显示器报“找不到 VGA 输入”}：程序下载成功、板上的 DONE 指示灯亮，说明配置没有问题，故障不在下载环节。确认设计本身无误，从而把问题定位到显示设备一侧。
+    
+    解决：更换显示器与 VGA 线后正常显示。
+    
+    \item \textbf{想做两张图片的切换，但显存放不下}：两张 640$\times$480、12bit 的图共需 7.86\,Mbit，而板上 Block RAM 一共只有 4.86\,Mbit，一张就已经占掉 3.93\,Mbit。让 Vivado 生成“两张图前后排布”的显存 IP（12bit $\times$ 655360），工具直接报错 \texttt{User configuration exceeds BRAM count in the selected device}；
+
+    解决：放弃采用两张图片切换，沿用单张图片静态显示。
+\end{itemize}
+
+\section{启示与建议}
+
+\textbf{启示：}
+\begin{enumerate}
+    \item 显示控制器把“扫到哪”和“显示什么”分开了：\texttt{vga\_ctrl} 只负责数出当前扫到第几行第几列，画面内容完全交给显存。这样换一张图只要换显存里的数据，成功把“时序”和“内容”解耦。
+    \item 动手加功能之前应该先算资源的账。我一开始想当然地认为“再放一张图而已”，直到算了两倍的总量和片上 Block RAM 的容量，才发现根本装不下，而且降到 8 位色深仍然不够。
+\end{enumerate}
+
+\textbf{建议：}手册在讲显存时提到了“需要自行计算具体显示像素对应到存储图片的地址”，但没有说明课程 coe 文件本身的排布规则。而手册同时附带的转换代码恰恰是按另一种步长生成的，直接使用会得到斜掉的图。建议手册直接写明 coe 的存储格式，或者把附带的转换代码与显存地址对齐。
+
+\end{document}
